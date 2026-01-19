@@ -1,0 +1,9 @@
+/.venv/
+/.idea/
+/resources/
+/film_archive_workflow/configures.py
+/film_archive_workflow/chroma_multimodal/
+/ark_solution_demos/chroma_image_db/
+/film_archive_workflow/film_archive.sqlite3
+/.trae/
+./film_archive_workflow/.env
