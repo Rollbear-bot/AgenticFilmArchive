@@ -1,4 +1,5 @@
 import os
+import concurrent.futures
 from volcenginesdkarkruntime import Ark
 from langchain_core.embeddings import Embeddings
 from langchain_core.documents import Document
@@ -138,20 +139,23 @@ class VecDB:
                     existing_file_paths.add(metadata['file_path'])
             print(f"  数据库中已存在 {len(existing_file_paths)} 个文件")
 
-        # 转换图片为base64数据URL并创建Document对象（仅处理新文件）
-        documents = []
+        # 筛选出需要处理的新图片
+        new_image_files = []
         skipped_count = 0
         for image_path in image_files:
-            file_name = os.path.basename(image_path)
-            
-            # 检查图片是否已存在于数据库
             if image_path in existing_file_paths:
-                print(f"  跳过已存在的图片: {file_name} (路径: {image_path})")
+                print(f"  跳过已存在的图片: {os.path.basename(image_path)} (路径: {image_path})")
                 skipped_count += 1
-                continue
-            
+            else:
+                new_image_files.append(image_path)
+
+        print(f"  需要处理 {len(new_image_files)} 张新图片")
+
+        # 辅助函数：处理单张图片
+        def _process_image(image_path):
+            file_name = os.path.basename(image_path)
             try:
-                # 仅处理新文件
+                # 转换图片为base64数据URL
                 image_data_url = image_to_base64(image_path)
 
                 # 为图片生成标签
@@ -165,7 +169,7 @@ class VecDB:
                 except:
                     scene_tags, style_tags, film_tags = "未知", "未知", "未知"
                 
-                # 创建Document对象，page_content存储base64数据URL，metadata存储图片信息和标签
+                # 创建Document对象
                 doc = Document(
                     page_content=image_data_url,
                     metadata={
@@ -178,11 +182,21 @@ class VecDB:
                         "full_tags": tags
                     }
                 )
-                documents.append(doc)
                 print(f"  成功处理图片: {file_name} (路径: {image_path})")
+                return doc
             except Exception as e:
                 print(f"  处理图片失败 {os.path.basename(image_path)}: {e}")
-                continue
+                return None
+
+        # 并行处理所有新图片
+        documents = []
+        if new_image_files:
+            print(f"  开始并行处理 {len(new_image_files)} 张新图片...")
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                # 使用executor.map并行处理所有图片
+                results = executor.map(_process_image, new_image_files)
+                # 收集处理结果，过滤掉None值
+                documents = [result for result in results if result is not None]
 
         print(f"[3/3] 完成图片处理，共生成 {len(documents)} 个Document对象，跳过 {skipped_count} 个已存在的图片")
 
@@ -190,7 +204,7 @@ class VecDB:
             print("\n  没有新图片需要添加，向量存储保持不变")
             return self.vector_store
 
-        # 步骤2: 构建或更新向量存储
+        # 步骤2: 构建或更新向量存储（串行执行，避免异步冲突）
         print(f"\n[向量存储] 开始构建/更新图片向量存储...")
 
         # 检查向量数据库是否已存在
