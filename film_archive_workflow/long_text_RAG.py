@@ -5,8 +5,8 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter  # 修复导入语句
 from langchain_chroma import Chroma  # 添加Chroma导入
 from volcenginesdkarkruntime import Ark
-from configures import RES_DIR, ARK_API_KEY, CHAT_MODEL
-from vecDb_handler import ArkImageEmbeddings  # 添加ArkImageEmbeddings导入
+from film_archive_workflow.configures import RES_DIR, ARK_API_KEY, CHAT_MODEL
+from film_archive_workflow.vecDb_handler import ArkImageEmbeddings  # 添加ArkImageEmbeddings导入
 
 # 设置环境变量
 os.environ["ARK_API_KEY"] = ARK_API_KEY

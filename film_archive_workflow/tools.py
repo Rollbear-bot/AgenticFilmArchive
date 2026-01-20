@@ -1,11 +1,11 @@
 import os
 import base64
 from io import BytesIO
-
 from PIL import Image
 from volcenginesdkarkruntime import Ark
 from langchain_core.tools import tool
-from configures import ARK_API_KEY, CHAT_MODEL, PROMPTS
+
+from film_archive_workflow.configures import ARK_API_KEY, CHAT_MODEL, PROMPTS
 
 # 初始化火山平台的多模态大模型客户端
 img_client = Ark(

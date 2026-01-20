@@ -4,10 +4,10 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from volcenginesdkarkruntime import Ark
 
-from configures import VECTOR_DB_PATH, RES_DIR, ARK_API_KEY, CHAT_MODEL
-from tools import generate_photo_tags
-from tools import image_to_base64
-from vecDb_handler import VecDB
+from film_archive_workflow.configures import VECTOR_DB_PATH, RES_DIR, ARK_API_KEY, CHAT_MODEL
+from film_archive_workflow.tools import generate_photo_tags
+from film_archive_workflow.tools import image_to_base64
+from film_archive_workflow.vecDb_handler import VecDB
 
 print("初始化聊天模型...")
 llm = ChatOpenAI(

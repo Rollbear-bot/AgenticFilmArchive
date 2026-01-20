@@ -1,5 +1,5 @@
-from vecDb_handler import VecDB
-from configures import VECTOR_DB_PATH, RES_DIR
+from film_archive_workflow.vecDb_handler import VecDB
+from film_archive_workflow.configures import VECTOR_DB_PATH, RES_DIR
 
 
 if __name__ == '__main__':
