@@ -3,6 +3,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from volcenginesdkarkruntime import Ark
+import concurrent.futures
 
 from film_archive_workflow.configures import VECTOR_DB_PATH, RES_DIR, ARK_API_KEY, CHAT_MODEL
 from film_archive_workflow.tools import generate_photo_tags
@@ -44,7 +45,8 @@ def retrieve_documents(query: str, k: int = 3, doc_type: str = "any", scene_tags
         :param style_tags: 可选参数，指定要过滤的风格标签列表
         :param film_tags: 可选参数，指定要过滤的胶片特征标签列表
     """
-    print(f"\n正在搜索与查询相关的文档: {query}")
+    print(f"\n[Tool Using] 正在搜索与查询相关的文档: {query}, type: {doc_type}, scene_tags: {scene_tags}, "
+          f"style_tags: {style_tags}, film_tags: {film_tags}")
     docs = vec_db.search_similar_documents(
         query, 
         k=k, 
@@ -118,8 +120,39 @@ def understand_image(image_path: str, prompt: str) -> str:
         return f"理解图片时出错: {str(e)}"
 
 
+@tool
+def understand_multi_img(image_paths: list, prompt: str) -> str:
+    """理解多张图片内容，对于多张图片提问同一个问题。
+    当需要理解多张图片中的内容时使用此工具。需要提供图片路径列表和要询问的问题。
+    若要获取图片路径，你应当先使用retrieve_documents工具检索向量数据库。
+    该工具会并行处理多张图片，因此具有较高效率。
+    注意：每张图片的处理是相互独立的，你给出的问题（prompt）会分别独立作用于每张图片
+
+    Args:
+        :param prompt: 要询问的问题
+        :param image_paths: 图片路径的列表
+        :return 每张图片的回答，每个回答之间用换行符隔开；示例：照片{image_paths[i]}的回答：{result}\n
+    """
+    print(f"[Tool Using] 正在理解多张图片: ")
+    for p in image_paths:
+        print(p)
+    print(f"\tprompt: {prompt}")
+
+    # 多线程并行调用理解图片函数
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        # 使用executor.map并行处理所有图片
+        results = executor.map(understand_image.invoke, [(p, prompt) for p in image_paths])
+    i = 0
+    res_str = ""
+    for result in results:
+        res_str += f"照片{image_paths[i]}的回答：{result}\n"
+        i += 1
+    return res_str
+
+
 # 创建工具列表
-tools = [retrieve_documents, understand_image, generate_photo_tags]
+# tools = [retrieve_documents, understand_image, generate_photo_tags]
+tools = [retrieve_documents, understand_image, understand_multi_img]
 
 # 创建代理
 print("创建代理...")
