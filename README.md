@@ -67,7 +67,7 @@
 
 初始化向量数据库并使用自然语言交互
 ```bash
-uv run chater.py
+uv run chat.py
 ```
 
 
@@ -75,7 +75,7 @@ uv run chater.py
 
 ```
 AgenticFilmArchive/
-├── chater.py                # 自然语言交互入口
+├── chat.py                  # 自然语言交互入口
 ├── configures.py            # 系统配置和提示词
 ├── long_text_RAG.py         # 长文档处理demo
 ├── reDb_handler.py          # 关系数据库处理
