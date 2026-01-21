@@ -5,10 +5,9 @@ from langchain_openai import ChatOpenAI
 from volcenginesdkarkruntime import Ark
 import concurrent.futures
 
-from film_archive_workflow.configures import *
-from film_archive_workflow.tools import generate_photo_tags
-from film_archive_workflow.tools import image_to_base64
-from film_archive_workflow.vecDb_handler import VecDB
+from configures import *
+from tools import image_to_base64
+from vecDb_handler import VecDB
 
 print("初始化聊天模型...")
 llm = ChatOpenAI(

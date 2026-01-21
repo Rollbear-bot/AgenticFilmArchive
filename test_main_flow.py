@@ -1,13 +1,13 @@
-from film_archive_workflow.vecDb_handler import VecDB
-from film_archive_workflow.configures import RES_DIR
+from vecDb_handler import VecDB
 import unittest
-from film_archive_workflow.chater import get_chat_response
+from configures import *
+from chater import get_chat_response
 
 
 class TestMainFlow(unittest.TestCase):
     def setUp(self):
         # 测试前的准备工作
-        self.vec_db = VecDB("../film_archive_workflow/chroma_multimodal", RES_DIR)
+        self.vec_db = VecDB(VECTOR_DB_PATH, RES_DIR)
 
     def test_main_flow(self):
         # 文本查询示例

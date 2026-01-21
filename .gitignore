@@ -1,8 +1,8 @@
 /.venv/
 /.idea/
 /resources/
-/film_archive_workflow/chroma_multimodal/
+/chroma_multimodal/
 /ark_solution_demos/chroma_image_db/
-/film_archive_workflow/film_archive.sqlite3
+/film_archive.sqlite3
 /.trae/
 ./.env

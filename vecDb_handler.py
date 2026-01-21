@@ -6,8 +6,8 @@ from langchain_core.documents import Document
 from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter  # 添加分块器导入
 
-from film_archive_workflow.configures import ARK_API_KEY, EMBED_MODEL, VECTOR_DB_PATH, RES_DIR
-from film_archive_workflow.tools import image_to_base64, generate_photo_tags
+from configures import ARK_API_KEY, EMBED_MODEL, VECTOR_DB_PATH, RES_DIR
+from tools import image_to_base64, generate_photo_tags
 
 
 class ArkImageEmbeddings(Embeddings):
