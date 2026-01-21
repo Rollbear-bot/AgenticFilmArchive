@@ -5,11 +5,11 @@ from PIL import Image
 from volcenginesdkarkruntime import Ark
 from langchain_core.tools import tool
 
-from film_archive_workflow.configures import ARK_API_KEY, CHAT_MODEL, PROMPTS
+from film_archive_workflow.configures import *
 
 # 初始化火山平台的多模态大模型客户端
 img_client = Ark(
-    base_url="https://ark.cn-beijing.volces.com/api/v3",
+    base_url=ARK_ENDPOINT,
     api_key=ARK_API_KEY,
 )
 
@@ -66,9 +66,9 @@ def generate_photo_tags(image_path: str) -> str:
 
 
 def image_to_base64(image_path):
-    """将本地图片转换为base64数据URL，大于9MB的图片使用缩略图"""
-    # 定义9MB的大小阈值
-    SIZE_THRESHOLD = 9 * 1024 * 1024  # 9MB
+    """将本地图片转换为base64数据URL，大于3MB的图片使用缩略图"""
+    # 定义3MB的大小阈值
+    SIZE_THRESHOLD = 3 * 1024 * 1024  # 3MB
 
     # 根据文件扩展名设置MIME类型
     _, ext = os.path.splitext(image_path)
@@ -83,8 +83,6 @@ def image_to_base64(image_path):
     file_size = os.path.getsize(image_path)
 
     if file_size > SIZE_THRESHOLD:
-        print(f"  图片 {os.path.basename(image_path)} 大小 {file_size / (1024*1024):.2f}MB 超过9MB，生成缩略图...")
-
         # 打开图片并生成缩略图
         with Image.open(image_path) as img:
             # 保持原始宽高比，将最长边缩放到1024像素

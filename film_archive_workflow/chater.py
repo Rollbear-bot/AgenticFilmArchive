@@ -5,7 +5,7 @@ from langchain_openai import ChatOpenAI
 from volcenginesdkarkruntime import Ark
 import concurrent.futures
 
-from film_archive_workflow.configures import VECTOR_DB_PATH, RES_DIR, ARK_API_KEY, CHAT_MODEL
+from film_archive_workflow.configures import *
 from film_archive_workflow.tools import generate_photo_tags
 from film_archive_workflow.tools import image_to_base64
 from film_archive_workflow.vecDb_handler import VecDB
@@ -13,8 +13,8 @@ from film_archive_workflow.vecDb_handler import VecDB
 print("初始化聊天模型...")
 llm = ChatOpenAI(
     model=CHAT_MODEL,
-    openai_api_base="https://ark.cn-beijing.volces.com/api/v3",  # 关键：指定DeepSeek的API端点
-    openai_api_key=ARK_API_KEY,  # 或从环境变量读取：os.getenv("DEEPSEEK_API_KEY")
+    openai_api_base=ARK_ENDPOINT,
+    openai_api_key=ARK_API_KEY,
     temperature=0.7,  # 控制生成随机性
     max_tokens=2048  # 控制生成长度
 )
@@ -25,7 +25,7 @@ vec_db = VecDB(VECTOR_DB_PATH, RES_DIR)
 
 # 初始化图片理解agent的客户端
 img_client = Ark(
-    base_url="https://ark.cn-beijing.volces.com/api/v3",
+    base_url=ARK_ENDPOINT,
     api_key=ARK_API_KEY,
 )
 
@@ -97,7 +97,7 @@ def understand_image(image_path: str, prompt: str) -> str:
 
         # 调用图片理解模型
         completion = img_client.chat.completions.create(
-            model="doubao-seed-1-6-251015",
+            model=VISION_MODEL,
             messages=[
                 {
                     "role": "user",
@@ -142,6 +142,7 @@ def understand_multi_img(image_paths: list, prompt: str) -> str:
     with concurrent.futures.ThreadPoolExecutor() as executor:
         # 使用executor.map并行处理所有图片
         results = executor.map(understand_image.invoke, [(p, prompt) for p in image_paths])
+        results = [r for r in results if r]
     i = 0
     res_str = ""
     for result in results:

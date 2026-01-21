@@ -1,6 +1,7 @@
 from film_archive_workflow.vecDb_handler import VecDB
-from film_archive_workflow.configures import VECTOR_DB_PATH, RES_DIR
+from film_archive_workflow.configures import RES_DIR
 import unittest
+from film_archive_workflow.chater import get_chat_response
 
 
 class TestMainFlow(unittest.TestCase):
@@ -26,6 +27,13 @@ class TestMainFlow(unittest.TestCase):
             image_search_results = self.vec_db.search_similar_documents(first_image_doc, k=2)
         else:
             print("向量存储中没有文档可用于查询")
+
+    def test_chat(self):
+        # 测试聊天机器人响应
+        question = "基于库中的照片，总结黑白照片的共同点"
+        response = get_chat_response(question)
+        self.assertIsNotNone(response)
+        self.assertNotEqual(response.strip(), "")
 
     def tearDown(self):
         # 测试后的清理工作

@@ -6,11 +6,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 从环境变量获取配置，设置默认值作为备选
+ARK_ENDPOINT = os.environ.get("ARK_ENDPOINT")
 ARK_API_KEY = os.getenv("ARK_API_KEY", "your-key")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "doubao-embedding-vision-250615")
 VECTOR_DB_PATH = os.getenv("VECTOR_DB_PATH", "./chroma_multimodal")  # 本地Chroma向量数据库路径
 RES_DIR = os.getenv("RES_DIR", "../resources")
 CHAT_MODEL = os.getenv("CHAT_MODEL", "doubao-seed-1-6-251015")
+VISION_MODEL = os.getenv("VISION_MODEL", "doubao-seed-1-6-251015")
 
 
 class PROMPTS:
