@@ -152,7 +152,9 @@ def understand_multi_img(image_paths: list, prompt: str) -> str:
 
 # 创建工具列表
 # tools = [retrieve_documents, understand_image, generate_photo_tags]
-tools = [retrieve_documents, understand_image, understand_multi_img]
+# tools = [retrieve_documents, understand_image, understand_multi_img]
+tools = [retrieve_documents, understand_image]
+
 
 # 创建代理
 print("创建代理...")

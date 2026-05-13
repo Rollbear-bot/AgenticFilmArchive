@@ -1,7 +1,7 @@
 from vecDb_handler import VecDB
 import unittest
 from configures import *
-from chater import get_chat_response
+from chat import get_chat_response
 
 
 class TestMainFlow(unittest.TestCase):

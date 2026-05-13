@@ -42,7 +42,7 @@
    ```
 2. 安装项目依赖：
    ```bash
-   uv pip install -r requirements.txt
+   uv sync
    ```
 
 ### 配置设置

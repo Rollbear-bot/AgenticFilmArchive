@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}首页 - 胶片摄影归档系统{% endblock %}
+
+{% block content %}
+<div class="home" x-data="homePage()">
+    <section class="hero">
+        <h2>AI 驱动的胶片摄影归档助理</h2>
+        <p>智能管理您的胶片摄影作品集，支持多模态检索和自然语言交互</p>
+        <div class="hero-actions">
+            <a href="/resources/" class="btn btn-primary">浏览资源</a>
+            <a href="/search/" class="btn btn-secondary">开始搜索</a>
+        </div>
+    </section>
+
+    <section class="features">
+        <div class="feature-card">
+            <div class="feature-icon">🖼️</div>
+            <h3>多模态知识库</h3>
+            <p>支持照片和文档的统一管理，基于向量检索快速定位目标资源</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">🏷️</div>
+            <h3>自动标签生成</h3>
+            <p>AI 自动为照片生成场景、风格、胶片特征标签</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">💬</div>
+            <h3>智能对话</h3>
+            <p>用自然语言与 AI 助手交流，获取摄影建议和知识</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">🔍</div>
+            <h3>混合检索</h3>
+            <p>结合向量相似度和结构化标签的精准检索</p>
+        </div>
+    </section>
+
+    <section class="quick-stats" x-show="stats">
+        <div class="stat-card">
+            <span class="stat-number" x-text="stats.total || 0"></span>
+            <span class="stat-label">资源总数</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-number" x-text="stats.images || 0"></span>
+            <span class="stat-label">照片数量</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-number" x-text="stats.docs || 0"></span>
+            <span class="stat-label">文档数量</span>
+        </div>
+    </section>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function homePage() {
+    return {
+        stats: null,
+        async init() {
+            try {
+                const response = await fetch('/api/v1/resources/');
+                const data = await response.json();
+                this.stats = {
+                    total: data.total,
+                    images: data.results ? data.results.filter(r => r.file_type === 'image').length : 0,
+                    docs: data.results ? data.results.filter(r => r.file_type === 'text').length : 0
+                };
+            } catch (e) {
+                console.error('加载统计数据失败:', e);
+            }
+        }
+    };
+}
+</script>
+{% endblock %}
