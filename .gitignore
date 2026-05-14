@@ -8,3 +8,4 @@
 /frontend/node_modules/
 /.agent/
 /ark_solution_demos/
+/db.sqlite3
