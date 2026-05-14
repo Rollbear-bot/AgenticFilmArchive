@@ -18,8 +18,9 @@ ALLOWED_HOSTS = ['*']
 
 # Application definition
 INSTALLED_APPS = [
-    'django.contrib.contenttypes',
-    'django.contrib.auth',
+    # 项目不使用Django ORM和用户认证，以下两个app已注释：
+    # 'django.contrib.contenttypes',
+    # 'django.contrib.auth',
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
@@ -50,13 +51,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'film_archive.wsgi.application'
 
-# Database - SQLite for compatibility with existing project
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
-}
+# 项目不使用Django ORM，所有数据存储在Chroma向量数据库中。
+# 若未来需要Django ORM，取消下面注释并恢复INSTALLED_APPS中的contenttypes/auth。
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = []
@@ -71,6 +73,7 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [
     BASE_DIR / 'static',
+    BASE_DIR / 'frontend' / 'dist',
 ]
 
 # Media files

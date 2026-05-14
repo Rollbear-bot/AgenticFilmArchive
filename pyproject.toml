@@ -39,6 +39,11 @@ dependencies = [
     "langchain-openai~=1.1.0",
     "langchain-text-splitters~=1.0.0",
     "langchain-chroma~=1.1.0",
+    # langgraph-prebuilt 1.0.9+ imports ExecutionInfo/ServerInfo from
+    # langgraph.runtime, which don't exist until langgraph>=1.1.5.
+    # Pin to 1.0.8 (the last safe release) to remain compatible with
+    # langchain~=1.1.0's langgraph<1.1.0 constraint.
+    "langgraph-prebuilt<1.0.9",
 
     # Web framework
     "django>=4.2,<6.0",

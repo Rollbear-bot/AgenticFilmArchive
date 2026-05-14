@@ -17,44 +17,42 @@
    - 文档资源：存储在`resources/doc/`目录下，支持Markdown格式文档
 
 2. **向量处理层**
-   - `ArkImageEmbeddings`：自定义嵌入模型，支持文本和图像的多模态嵌入
-   - `vecDb_handler.py`：向量数据库核心功能实现
+   - `core/vector_db.py`：向量数据库核心功能，封装Chroma与Ark多模态嵌入
 
 3. **工具层**
-   - `tools.py`：提供图片转base64、照片标签生成等工具函数
+   - `core/services.py`：提供图片转base64、照片标签生成等工具函数
    - `configures.py`：系统配置和提示词管理
 
 4. **应用层**
-   - Web App: Django + React
+   - Web App: Django（API服务 + 静态文件服务）+ React（Vite构建，浏览器端渲染）
 
 ### 代码结构
 
 ```
 AgenticFilmArchive/
 ├── film_archive/         # Django项目配置
-│   ├── settings.py       
-│   ├── urls.py           
-│   └── wsgi.py           
+│   ├── settings.py
+│   ├── urls.py
+│   └── wsgi.py
 ├── api/                  # RESTful API层
-│   ├── views.py          
-│   ├── serializers.py    
-│   └── urls.py           
+│   ├── views.py
+│   ├── serializers.py
+│   └── urls.py
 ├── core/                 # 核心业务逻辑
 │   ├── vector_db.py      # 向量数据库服务
 │   ├── chat_service.py   # AI对话服务
-│   ├── models.py         # 数据模型
-│   └── views.py          # 页面视图
-├── frontend/             # React前端应用
-│   ├── src/              
-│   │   ├── App.jsx       
-│   │   └── main.jsx      
-│   ├── package.json      # 前端依赖
-│   └── vite.config.js    # 前端构建配置
-├── static/               # 前端静态资源
-│   ├── js/react-app.jsx  
-│   └── css/              
+│   ├── services.py       # 图片处理与标签生成
+│   └── views.py          # 前端入口视图
+├── frontend/             # React前端应用（Vite构建）
+│   ├── src/
+│   │   ├── components/   # 可复用组件
+│   │   ├── pages/        # 页面组件
+│   │   ├── services/     # API客户端
+│   │   └── utils/        # 工具函数
+│   ├── package.json
+│   └── vite.config.js
+├── static/               # 构建产物静态资源（Django serve）
 ├── templates/            # HTML模板
-│   └── react-index.html  
 ├── resources/            # 知识库资源
 │   ├── img/              # 图片资源
 │   └── doc/              # 文档资源
@@ -101,26 +99,22 @@ mkdir -p resources/img resources/doc
 # 将相关文本文档放入resources/doc/
 ```
 
-#### 5. 初始化向量数据库
+#### 5. 构建前端
 ```bash
-# 稍后通过Web界面操作同步资源
-# 或使用命令行工具初始化
-python -c "from core.vector_db import get_vector_db_service; db = get_vector_db_service(); db.sync_resources()"
+cd frontend
+npm install
+npm run build
+cd ..
 ```
 
 #### 6. 启动服务器
 ```bash
-# 启动Django后端（端口8000）
+# Django后端（端口8000，同时serve前端静态文件）
 python manage.py runserver
-
-# 在另一个终端启动React前端（端口5173）
-cd frontend
-npm install
-npm run dev
 ```
 
-#### 7. 访问应用
-- http://localhost:8000/
+#### 7. 初始化向量数据库
+访问 http://localhost:8000/sync/ ，点击"开始同步"将资源导入向量数据库。
 
 
 ## ⚠️注意事项

@@ -3,6 +3,8 @@
 /resources/
 /chroma_multimodal/
 /ark_solution_demos/chroma_image_db/
-/film_archive.sqlite3
 /.trae/
 /.env
+/frontend/node_modules/
+/.agent/
+/ark_solution_demos/

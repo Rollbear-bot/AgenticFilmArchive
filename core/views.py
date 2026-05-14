@@ -8,8 +8,19 @@ from django.conf import settings
 
 def react_app_view(request):
     """渲染React应用入口页面"""
+    dist_index = settings.BASE_DIR / 'frontend' / 'dist' / 'index.html'
+
+    if not dist_index.exists():
+        return HttpResponse(
+            '<h1>前端未构建</h1>'
+            '<p>请运行以下命令构建前端：</p>'
+            '<pre>cd frontend && npm install && npm run build</pre>',
+            status=503,
+            content_type='text/html'
+        )
+
     try:
-        with open(settings.BASE_DIR / 'templates' / 'react-index.html', 'r', encoding='utf-8') as f:
+        with open(dist_index, 'r', encoding='utf-8') as f:
             content = f.read()
         return HttpResponse(content, content_type='text/html')
     except Exception as e:
