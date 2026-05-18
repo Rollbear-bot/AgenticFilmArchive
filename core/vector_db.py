@@ -232,52 +232,69 @@ class VectorDBService:
         
         return {"status": "success", "message": f"成功添加 {len(all_documents)} 个文档块", "count": len(all_documents), "skipped": skipped_count}
     
-    def search(self, query, k=10, doc_type=None, scene_tags=None, style_tags=None, film_tags=None):
+    def search(self, query, k=10, doc_type=None, scene_tags=None, style_tags=None, film_tags=None,
+               rerank_enabled=True, rerank_top_n=None):
         if self.vector_store is None:
             return []
-        
+
         filter_clause = {}
         if doc_type:
             filter_clause["type"] = doc_type
-        
+
+        coarse_k = k * 2 if rerank_enabled else k
         results_with_scores = self.vector_store.similarity_search_with_score(
             query=query,
-            k=k * 2,
+            k=coarse_k,
             filter=filter_clause if filter_clause else None
         )
-        
+
         filtered_results = []
         for result, score in results_with_scores:
             match = True
-            
+
             if scene_tags:
                 result_scene = result.metadata.get('scene_tags', '')
                 for tag in scene_tags:
                     if tag not in result_scene:
                         match = False
                         break
-            
+
             if match and style_tags:
                 result_style = result.metadata.get('style_tags', '')
                 for tag in style_tags:
                     if tag not in result_style:
                         match = False
                         break
-            
+
             if match and film_tags:
                 result_film = result.metadata.get('film_tags', '')
                 for tag in film_tags:
                     if tag not in result_film:
                         match = False
                         break
-            
+
             if match:
                 filtered_results.append({'document': result, 'score': float(score)})
-            
-            if len(filtered_results) >= k:
+
+            if not rerank_enabled and len(filtered_results) >= k:
                 break
-        
+
+        if rerank_enabled and filtered_results:
+            top_n = rerank_top_n if rerank_top_n is not None else k
+            filtered_results = self._apply_rerank(query, filtered_results, top_n)
+        elif not rerank_enabled:
+            filtered_results = filtered_results[:k]
+
         return filtered_results
+
+    def _apply_rerank(self, query: str, documents: list[dict], top_n: int) -> list[dict]:
+        """应用精排器对文档重排序
+        """
+        from core.reranker import get_reranker
+
+        reranker = get_reranker()
+        print(f"[INFO] Apply reranker {reranker.name}: k = {len(documents)} -> {top_n}")
+        return reranker.rerank(query, documents, top_n)
     
     def normalize_path(self, path):
         """规范化文件路径"""

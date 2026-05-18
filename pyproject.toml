@@ -60,6 +60,10 @@ dependencies = [
 
     # Utilities
     "python-dotenv~=1.2.1",
+    "requests>=2.31.0",
+
+    # Reranker
+    "sentence-transformers>=3.0.0",
 ]
 
 [project.optional-dependencies]

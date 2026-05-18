@@ -1,5 +1,6 @@
 # 配置参数
 import os
+
 from dotenv import load_dotenv
 
 # 加载.env文件中的环境变量
@@ -13,6 +14,25 @@ VECTOR_DB_PATH = os.getenv("VECTOR_DB_PATH")
 RES_DIR = os.getenv("RES_DIR", "resources")
 CHAT_MODEL = os.getenv("CHAT_MODEL", "doubao-seed-1-6-251015")
 VISION_MODEL = os.getenv("VISION_MODEL", "doubao-seed-1-6-251015")
+
+# Reranker 配置
+RERANK_STRATEGY = os.getenv("RERANK_STRATEGY", "alibaba")
+RERANK_LOCAL_MODEL = os.getenv("RERANK_LOCAL_MODEL", "BAAI/bge-reranker-base")
+
+# 阿里云 DashScope Rerank 配置
+RERANK_ALIBABA_MODEL = os.getenv("RERANK_ALIBABA_MODEL", "qwen3-rerank")
+RERANK_ALIBABA_MULTIMODAL_MODEL = os.getenv(
+    "RERANK_ALIBABA_MULTIMODAL_MODEL", "qwen3-vl-rerank"
+)
+RERANK_ALIBABA_ENDPOINT = os.getenv(
+    "RERANK_ALIBABA_ENDPOINT",
+    "https://dashscope.aliyuncs.com/compatible-api/v1/reranks",
+)
+RERANK_ALIBABA_MULTIMODAL_ENDPOINT = os.getenv(
+    "RERANK_ALIBABA_MULTIMODAL_ENDPOINT",
+    "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank",
+)
+RERANK_ALIBABA_API_KEY = os.getenv("RERANK_ALIBABA_API_KEY", "")
 
 
 class PROMPTS:

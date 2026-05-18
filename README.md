@@ -127,8 +127,7 @@ python manage.py runserver
 
 ## 📝TODO
 
-- [ ] 批量导入/导出工具
-- [ ] 高级搜索过滤器（EXIF元数据）
+- [x] 召回后精排rerank
+- [ ] 多路召回
+- [ ] Agent Memory实现
 - [ ] 智能相册自动分类
-- [ ] 用户认证和权限管理
-
