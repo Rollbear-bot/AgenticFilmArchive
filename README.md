@@ -26,6 +26,62 @@
 4. **应用层**
    - Web App: Django（API服务 + 静态文件服务）+ React（Vite构建，浏览器端渲染）
 
+### 数据流示意
+
+```mermaid
+flowchart TD
+    subgraph OFFLINE["Offline 数据准备"]
+        direction TB
+
+        IMG_IN([图像输入<br/>jpg png])
+        TXT_IN([文本输入<br/>md 文件])
+
+        IMG_IN --> SCAN[图像扫描<br/>os.walk]
+        SCAN --> TAG[生成标签<br/>Ark Vision API]
+        TAG --> B64[Base64 编码<br/>image_to_base64]
+
+        TXT_IN --> MD_LOAD[Markdown 加载器]
+        MD_LOAD --> SPLIT[文本切分<br/>chunk_size=1000]
+
+        B64 --> EMBED[ArkImageEmbeddings]
+        SPLIT --> EMBED
+
+        EMBED --> VEC["稠密向量 2048d"]
+        VEC --> CHROMA[(ChromaDB<br/>chroma_multimodal)]
+    end
+
+    subgraph ONLINE["Online 检索生成"]
+        direction TB
+
+        USER_QUERY([用户查询<br/>文本或图像])
+        USER_QUERY --> EMBED_Q[ArkImageEmbeddings]
+
+        EMBED_Q --> SEARCH[VectorDBService.search]
+
+        subgraph RETRIEVAL["召回与精排"]
+            direction TB
+            SEARCH --> COARSE[粗排召回<br/>similarity_search<br/>k*2 候选]
+            COARSE --> TAG_FILTER[Tag 过滤<br/>scene/style/film]
+            TAG_FILTER --> RERANK{文档类型判断}
+
+            RERANK -->|"type=text"| TEXT_RERANK[qwen3-rerank<br/>文本精排接口]
+            RERANK -->|"type=image/mixed"| MULTI_RERANK[qwen3-vl-rerank<br/>多模态精排接口]
+
+            TEXT_RERANK --> RANKED[精排结果<br/>top_n]
+            MULTI_RERANK --> RANKED
+        end
+
+        RANKED --> FORMAT[格式化上下文<br/>图像转标签<br/>文本转摘要]
+        FORMAT --> PROMPT[组装 Prompt]
+        PROMPT --> LLM[LLM API]
+        LLM --> ANSWER([生成回答])
+    end
+
+    CHROMA -.->|向量检索| SEARCH
+
+```
+
+
 ### 代码结构
 
 ```
@@ -129,5 +185,6 @@ python manage.py runserver
 
 - [x] 召回后精排rerank
 - [ ] 多路召回
+- [ ] 语义切分chunking
 - [ ] Agent Memory实现
 - [ ] 智能相册自动分类
