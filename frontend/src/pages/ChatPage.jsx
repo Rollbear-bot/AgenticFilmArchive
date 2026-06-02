@@ -1,7 +1,13 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import { formatTime } from '../utils/format';
 import api from '../services/api';
 import ChatMessage from '../components/ChatMessage';
+
+let _msgIdCounter = 0;
+function nextMsgId() {
+  return ++_msgIdCounter;
+}
 
 function ChatPage() {
   const [messages, setMessages] = useState([]);
@@ -16,7 +22,7 @@ function ChatPage() {
     '拍摄夜景的技巧？',
     '什么是胶片颗粒感？',
     '推荐几个胶片型号',
-    '如何冲洗胶片？'
+    '如何冲洗胶片？',
   ];
 
   useEffect(() => {
@@ -28,8 +34,8 @@ function ChatPage() {
         role: 'assistant',
         content: welcomeMsg,
         time: formatTime(new Date()),
-        tool_calls: []
-      }
+        tool_calls: [],
+      },
     ]);
     setThreadId(null);
   }, [agentMode]);
@@ -42,54 +48,245 @@ function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }
 
-  async function sendMessage() {
+  // ===== 流式对话 =====
+  async function sendMessageStreaming(message) {
+    const userMsg = {
+      id: nextMsgId(),
+      role: 'user',
+      content: message,
+      time: formatTime(new Date()),
+      tool_calls: [],
+    };
+    setMessages((prev) => [...prev, userMsg]);
+
+    setInputMessage('');
+    setLoading(true);
+
+    // 创建一个空的 assistant 消息用于流式更新
+    const assistantMsgId = nextMsgId();
+    const assistantMsg = {
+      id: assistantMsgId,
+      role: 'assistant',
+      content: '',
+      time: formatTime(new Date()),
+      tool_calls: [],
+      thinking: [],
+      isStreaming: true,
+    };
+    setMessages((prev) => [...prev, assistantMsg]);
+
+    // 流式回调
+    const callbacks = {
+      onThinking(data) {
+        flushSync(() => {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== assistantMsgId) return m;
+              const lastThink = m.thinking?.[m.thinking.length - 1];
+              if (lastThink && lastThink.isStreaming) {
+                const updatedThinking = [...m.thinking];
+                updatedThinking[updatedThinking.length - 1] = {
+                  ...lastThink,
+                  content: (lastThink.content || '') + data.content,
+                };
+                return { ...m, thinking: updatedThinking };
+              }
+              return {
+                ...m,
+                thinking: [
+                  ...(m.thinking || []),
+                  { content: data.content, isStreaming: true },
+                ],
+              };
+            })
+          );
+        });
+      },
+
+      onText(data) {
+        flushSync(() => {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== assistantMsgId) return m;
+              const updatedThinking = (m.thinking || []).map((t) =>
+                t.isStreaming ? { ...t, isStreaming: false } : t
+              );
+              return {
+                ...m,
+                content: (m.content || '') + data.content,
+                thinking: updatedThinking,
+              };
+            })
+          );
+        });
+      },
+
+      onToolStart(data) {
+        flushSync(() => {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== assistantMsgId) return m;
+              return {
+                ...m,
+                tool_calls: [
+                  ...(m.tool_calls || []),
+                  {
+                    id: `tc-${nextMsgId()}`,
+                    tool: data.tool,
+                    args: data.args,
+                    result: null,
+                    images: null,
+                    status: 'running',
+                  },
+                ],
+              };
+            })
+          );
+        });
+      },
+
+      onToolEnd(data) {
+        flushSync(() => {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== assistantMsgId) return m;
+              return {
+                ...m,
+                tool_calls: (m.tool_calls || []).map((tc) =>
+                  tc.tool === data.tool && tc.status === 'running'
+                    ? { ...tc, result: data.result, status: 'done' }
+                    : tc
+                ),
+              };
+            })
+          );
+        });
+      },
+
+      onToolImages(data) {
+        flushSync(() => {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== assistantMsgId) return m;
+              const updatedToolCalls = [...(m.tool_calls || [])];
+              for (let i = updatedToolCalls.length - 1; i >= 0; i--) {
+                if (updatedToolCalls[i].tool === 'retrieve_knowledge' && updatedToolCalls[i].status === 'done') {
+                  updatedToolCalls[i] = {
+                    ...updatedToolCalls[i],
+                    images: data.images,
+                  };
+                  break;
+                }
+              }
+              return { ...m, tool_calls: updatedToolCalls };
+            })
+          );
+        });
+      },
+
+      onDone(data) {
+        if (data.thread_id) {
+          setThreadId(data.thread_id);
+        }
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== assistantMsgId) return m;
+            return { ...m, isStreaming: false, time: formatTime(new Date()) };
+          })
+        );
+        setLoading(false);
+      },
+
+      onError(data) {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== assistantMsgId) return m;
+            return {
+              ...m,
+              content: m.content || `抱歉，处理消息时出错：${data.message || '未知错误'}`,
+              isStreaming: false,
+              time: formatTime(new Date()),
+            };
+          })
+        );
+        setLoading(false);
+      },
+    };
+
+    try {
+      await api.sendAgentMessageStream(message, threadId, callbacks);
+    } catch (error) {
+      console.error('Stream error:', error);
+      setLoading(false);
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== assistantMsgId) return m;
+          return {
+            ...m,
+            content: m.content || `抱歉，连接服务器时出现错误：${error.message}`,
+            isStreaming: false,
+            time: formatTime(new Date()),
+          };
+        })
+      );
+    }
+  }
+
+  // ===== 普通对话（非流式）=====
+  async function sendMessageNormal() {
     const message = inputMessage.trim();
     if (!message || loading) return;
 
     const userMsg = {
+      id: nextMsgId(),
       role: 'user',
       content: message,
       time: formatTime(new Date()),
-      tool_calls: []
+      tool_calls: [],
     };
-    setMessages(prev => [...prev, userMsg]);
+    setMessages((prev) => [...prev, userMsg]);
 
     setInputMessage('');
     setLoading(true);
 
     try {
-      let data;
-      if (agentMode) {
-        data = await api.sendAgentMessage(message, threadId);
-        // 保存 thread_id 用于后续多轮对话
-        if (data.history_id) {
-          setThreadId(data.history_id);
-        }
-      } else {
-        data = await api.sendChatMessage(message);
-      }
+      const data = await api.sendChatMessage(message);
 
-      setMessages(prev => [
+      setMessages((prev) => [
         ...prev,
         {
+          id: nextMsgId(),
           role: 'assistant',
           content: data.answer || '抱歉，我暂时无法回答您的问题。',
           time: formatTime(new Date()),
-          tool_calls: data.resources_used || []
-        }
+          tool_calls: data.resources_used || [],
+        },
       ]);
     } catch (error) {
-      setMessages(prev => [
+      setMessages((prev) => [
         ...prev,
         {
+          id: nextMsgId(),
           role: 'assistant',
           content: '抱歉，连接服务器时出现错误，请稍后重试。',
           time: formatTime(new Date()),
-          tool_calls: []
-        }
+          tool_calls: [],
+        },
       ]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  // ===== 发送入口 =====
+  async function sendMessage() {
+    const message = inputMessage.trim();
+    if (!message || loading) return;
+
+    if (agentMode) {
+      await sendMessageStreaming(message);
+    } else {
+      await sendMessageNormal();
     }
   }
 
@@ -98,18 +295,19 @@ function ChatPage() {
   }
 
   function handleToggleMode() {
-    setAgentMode(prev => !prev);
+    setAgentMode((prev) => !prev);
   }
 
   function handleNewSession() {
     setThreadId(null);
     setMessages([
       {
+        id: nextMsgId(),
         role: 'assistant',
         content: '已开始新的对话会话。Agent 将重新理解您的上下文。',
         time: formatTime(new Date()),
-        tool_calls: []
-      }
+        tool_calls: [],
+      },
     ]);
   }
 
@@ -140,17 +338,17 @@ function ChatPage() {
             )}
             {agentMode && (
               <span className="mode-hint">
-                Agent 自主决策工具调用 | 支持多轮对话
+                流式实时输出 | 多轮对话 | 工具调用可视化
               </span>
             )}
           </div>
 
           <div className="chat-messages-list">
-            {messages.map((msg, index) => (
-              <ChatMessage key={index} message={msg} agentMode={agentMode} />
+            {messages.map((msg) => (
+              <ChatMessage key={msg.id} message={msg} agentMode={agentMode} />
             ))}
 
-            {loading && (
+            {loading && !agentMode && (
               <div className="chat-message assistant">
                 <div className="chat-message-avatar">🤖</div>
                 <div className="chat-message-content">
@@ -160,11 +358,6 @@ function ChatPage() {
                       <span></span>
                       <span></span>
                     </div>
-                    {agentMode && (
-                      <div style={{ fontSize: '0.8rem', color: '#888', marginTop: '6px' }}>
-                        Agent 正在思考并决定是否调用工具...
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
@@ -178,9 +371,10 @@ function ChatPage() {
               <div className="chat-input-wrapper">
                 <textarea
                   className="chat-input"
-                  placeholder={agentMode
-                    ? "Agent 模式下输入消息... (Ctrl+Enter 发送)"
-                    : "输入消息... (Ctrl+Enter 发送)"
+                  placeholder={
+                    agentMode
+                      ? 'Agent 模式下输入消息... (Ctrl+Enter 发送)'
+                      : '输入消息... (Ctrl+Enter 发送)'
                   }
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
@@ -202,6 +396,7 @@ function ChatPage() {
             </div>
             <div style={{ marginTop: '8px', fontSize: '0.85rem', color: '#999' }}>
               Ctrl+Enter 发送快捷键
+              {agentMode && ' | Agent 模式下自动流式输出'}
             </div>
           </div>
         </div>
@@ -223,10 +418,29 @@ function ChatPage() {
           {agentMode && (
             <div className="agent-info" style={{ marginTop: '20px' }}>
               <h3>Agent 工具集</h3>
-              <ul style={{ fontSize: '0.85rem', color: '#666', paddingLeft: '16px', lineHeight: '1.8' }}>
-                <li>🔍 <strong>retrieve_knowledge</strong><br/>检索胶片摄影知识库</li>
-                <li>🖼️ <strong>analyze_image</strong><br/>分析具体图片内容</li>
-                <li>🏷️ <strong>search_by_tags</strong><br/>按标签筛选浏览资源</li>
+              <ul
+                style={{
+                  fontSize: '0.85rem',
+                  color: '#666',
+                  paddingLeft: '16px',
+                  lineHeight: '1.8',
+                }}
+              >
+                <li>
+                  🔍 <strong>retrieve_knowledge</strong>
+                  <br />
+                  检索胶片摄影知识库
+                </li>
+                <li>
+                  🖼️ <strong>analyze_image</strong>
+                  <br />
+                  分析具体图片内容
+                </li>
+                <li>
+                  🏷️ <strong>search_by_tags</strong>
+                  <br />
+                  按标签筛选浏览资源
+                </li>
               </ul>
             </div>
           )}

@@ -74,6 +74,23 @@ class ChatService:
             "history_id": result["thread_id"],
         }
 
+    async def chat_with_agent_stream(self, message: str, thread_id: str | None = None):
+        """使用 LangGraph Agent 进行流式对话
+
+        返回异步生成器，逐个 yield SSE 格式的事件字符串。
+        供 Django StreamingHttpResponse 消费。
+
+        Args:
+            message: 用户消息
+            thread_id: 会话线程 ID，用于多轮对话。不传则自动生成。
+
+        Yields:
+            SSE 格式事件字符串
+        """
+        agent = self._get_agent_service()
+        async for sse_chunk in agent.chat_stream(message, thread_id=thread_id):
+            yield sse_chunk
+
     def retrieve_documents(
         self,
         query: str,

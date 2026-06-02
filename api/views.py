@@ -3,26 +3,29 @@ API Views - API视图层
 处理RESTful API请求
 """
 
+import asyncio
+import json
 import os
-from django.http import FileResponse, JsonResponse
+
+from django.http import FileResponse
+from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from rest_framework import status
 
 from api.serializers import (
-    ResourceListSerializer,
-    ResourceSerializer,
-    ResourceSearchSerializer,
+    AgentChatMessageSerializer,
     ChatMessageSerializer,
     ChatResponseSerializer,
-    SyncResponseSerializer,
-    HealthCheckSerializer,
     ConfigSerializer,
-    AgentChatMessageSerializer,
+    HealthCheckSerializer,
+    ResourceListSerializer,
+    ResourceSearchSerializer,
+    ResourceSerializer,
+    SyncResponseSerializer,
 )
-from core.vector_db import get_vector_db_service
+from configures import RES_DIR, VECTOR_DB_PATH
 from core.chat_service import get_chat_service
-from configures import VECTOR_DB_PATH, RES_DIR
+from core.vector_db import get_vector_db_service
 
 
 # 健康检查
@@ -315,6 +318,76 @@ def agent_chat_api(request):
 
     response_serializer = ChatResponseSerializer(result)
     return Response(response_serializer.data)
+
+
+# Agent 流式对话接口（SSE）
+@api_view(["POST"])
+def agent_chat_stream_api(request):
+    """Agent 流式对话接口 - SSE (Server-Sent Events)
+
+    实时推送 Agent 的思考过程、工具调用和回答内容。
+    事件类型：thinking | text | tool_start | tool_end | tool_images | done | error
+
+    使用 queue + threading 将异步 astream_events 桥接到同步 WSGI 流，
+    确保每个事件即时推送到客户端。
+    """
+    import queue
+    import threading
+
+    from django.http import StreamingHttpResponse
+
+    serializer = AgentChatMessageSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    data = serializer.validated_data
+    message = data["message"]
+    thread_id = data.get("thread_id") or None
+
+    chat_service = get_chat_service()
+
+    # 用 Queue 桥接异步 Agent → 同步 WSGI 流
+    q: queue.Queue = queue.Queue()
+
+    def _run_async_agent():
+        """在独立线程中运行异步 Agent，将 SSE 事件推入队列"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            async def _collect():
+                async for sse_chunk in chat_service.chat_with_agent_stream(message, thread_id=thread_id):
+                    q.put(sse_chunk.encode("utf-8"))
+                q.put(None)  # 结束哨兵
+            loop.run_until_complete(_collect())
+        except Exception as e:
+            q.put(_sse_event_bytes("error", {"message": str(e)}))
+            q.put(None)
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=_run_async_agent, daemon=True)
+    t.start()
+
+    def _sync_generator():
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            yield item
+
+    response = StreamingHttpResponse(
+        _sync_generator(),
+        content_type="text/event-stream",
+    )
+    response["Cache-Control"] = "no-cache"
+    response["X-Accel-Buffering"] = "no"
+    response["Access-Control-Allow-Origin"] = "*"
+    return response
+
+
+def _sse_event_bytes(event_type: str, data: dict) -> bytes:
+    """内联 SSE 格式化（bytes 版本，避免在异步线程中导入 api.sse）"""
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
 
 
 # 对话历史

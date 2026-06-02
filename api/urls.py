@@ -3,6 +3,7 @@ API URL configuration - RESTful API路由
 """
 
 from django.urls import path
+
 from . import views
 
 urlpatterns = [
@@ -21,4 +22,6 @@ urlpatterns = [
     path("chat/history/", views.chat_history_api, name="chat_history_api"),
     # Agent 对话接口（LangGraph ReAct Agent）
     path("agent/chat/", views.agent_chat_api, name="agent_chat_api"),
+    # Agent 流式对话接口（SSE）
+    path("agent/chat/stream/", views.agent_chat_stream_api, name="agent_chat_stream_api"),
 ]

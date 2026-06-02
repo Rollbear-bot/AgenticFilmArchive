@@ -5,7 +5,10 @@ Agent Service - LangGraph ReAct Agent 服务层
 让 LLM 自主决定何时检索知识库、何时分析图片、何时按标签搜索。
 """
 
+import asyncio
+import json
 import uuid
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -17,6 +20,10 @@ from langgraph.prebuilt import create_react_agent
 from configures import ARK_API_KEY, ARK_ENDPOINT, CHAT_MODEL
 from core.services import get_image_client, image_to_base64
 from core.vector_db import get_vector_db_service
+
+# 侧通道缓存：retrieve_knowledge 将图片的 file_path 写入此缓存，
+# SSE 流处理器读取后用 image_to_base64() 生成缩略图 data URL
+_tool_image_cache: dict[str, list[dict]] = {}
 
 AGENT_SYSTEM_PROMPT = """你是一个专业的胶片摄影助手。你可以使用以下工具来帮助用户：
 
@@ -62,6 +69,7 @@ def retrieve_knowledge(query: str, k: int = 3, doc_type: str = "any") -> str:
         return "未找到相关文档或图片。"
 
     formatted = []
+    image_paths = []  # 收集图片 file_path 用于侧通道
     for i, item in enumerate(results):
         doc = item["document"]
         meta = doc.metadata
@@ -71,12 +79,22 @@ def retrieve_knowledge(query: str, k: int = 3, doc_type: str = "any") -> str:
         if meta.get("type") == "image":
             formatted.append(
                 f"[{i + 1}] 📷 图片: {meta.get('file_name', '未知')}\n"
+                f"    路径: {meta.get('file_path', '未知')}\n"
                 f"    场景: {meta.get('scene_tags', '未知')}\n"
                 f"    风格: {meta.get('style_tags', '未知')}\n"
                 f"    胶片: {meta.get('film_tags', '未知')}\n"
-                f"    路径: {meta.get('file_path', '')}\n"
                 f"    相关度: {score:.4f}" + (f" (精排: {rerank_score:.4f})" if rerank_score else "")
             )
+            # 收集图片 file_path，稍后由 SSE handler 生成缩略图
+            file_path = meta.get("file_path", "")
+            # 用规范化路径做去重比较（去掉 ./ ../ 前缀差异）
+            normalized = _normalize_fp(file_path)
+            if file_path and normalized not in [p["_norm"] for p in image_paths]:
+                image_paths.append({
+                    "file_name": meta.get("file_name", "未知"),
+                    "file_path": file_path,
+                    "_norm": normalized,
+                })
         else:
             content = doc.page_content[:500]
             formatted.append(
@@ -84,6 +102,10 @@ def retrieve_knowledge(query: str, k: int = 3, doc_type: str = "any") -> str:
                 f"    内容: {content}...\n"
                 f"    相关度: {score:.4f}" + (f" (精排: {rerank_score:.4f})" if rerank_score else "")
             )
+
+    # 将图片路径写入侧通道缓存（LLM 不可见）
+    if image_paths:
+        _tool_image_cache.setdefault("latest", []).extend(image_paths)
 
     return "\n\n".join(formatted)
 
@@ -101,11 +123,13 @@ def analyze_image(file_path: str, question: str = "请详细描述这张照片�
     """
     import os
 
-    if not os.path.exists(file_path):
+    # 使用 _resolve_path 处理 Chroma DB 中不一致的 ./ 和 ../ 前缀
+    resolved_path = _resolve_path(file_path)
+    if not resolved_path:
         return f"错误: 文件不存在 - {file_path}"
 
     try:
-        image_url = image_to_base64(file_path)
+        image_url = image_to_base64(resolved_path)
         client = get_image_client()
 
         completion = client.chat.completions.create(
@@ -329,6 +353,184 @@ class AgentService:
             "tool_calls": tool_calls,
             "thread_id": thread_id,
         }
+
+    async def chat_stream(self, message: str, thread_id: str | None = None) -> AsyncGenerator[str, None]:
+        """流式对话接口 — 通过 astream_events 实时推送 Agent 执行过程。
+
+        生成 SSE 格式的事件字符串，供 Django StreamingHttpResponse 消费。
+        事件类型：thinking | text | tool_start | tool_end | tool_images | done | error
+
+        Args:
+            message: 用户消息
+            thread_id: 会话线程 ID，用于多轮对话。不传则自动生成。
+
+        Yields:
+            SSE 格式字符串，如 "event: text\\ndata: {...}\\n\\n"
+        """
+        self._ensure_agent()
+
+        if thread_id is None:
+            thread_id = str(uuid.uuid4())
+
+        config = {"configurable": {"thread_id": thread_id}}
+
+        # 清空上一次的图片缓存
+        _tool_image_cache.pop("latest", None)
+
+        print(f"\n[Agent Stream] 收到消息 (thread={thread_id[:8]}...): {message[:100]}")
+
+        input_data = {"messages": [HumanMessage(content=message)]}
+
+        try:
+            async for event in self._agent.astream_events(input_data, config=config, version="v2"):
+                event_type = event.get("event", "")
+                event_name = event.get("name", "")
+                event_data = event.get("data", {})
+
+                # --- 模型流式输出 ---
+                if event_type == "on_chat_model_stream":
+                    chunk = event_data.get("chunk", None)
+                    if chunk is None:
+                        continue
+
+                    chunk_content = getattr(chunk, "content", "") or ""
+
+                    # 如果模型决定调用工具，chunk 可能包含 tool_call_chunks
+                    has_tool_calls = (
+                        hasattr(chunk, "tool_call_chunks") and chunk.tool_call_chunks
+                    )
+
+                    if has_tool_calls:
+                        # 模型正在构造 tool_call，视为 thinking
+                        for tc_chunk in chunk.tool_call_chunks:
+                            name = getattr(tc_chunk, "name", None)
+                            args = getattr(tc_chunk, "args", None)
+                            if name or args:
+                                thinking_parts = []
+                                if name:
+                                    thinking_parts.append(f"调用工具: {name}")
+                                if args:
+                                    thinking_parts.append(str(args))
+                                yield _sse_event("thinking", {"content": " | ".join(thinking_parts)})
+                    elif chunk_content:
+                        yield _sse_event("text", {"content": chunk_content})
+
+                # --- 工具开始执行 ---
+                elif event_type == "on_tool_start":
+                    tool_input = event_data.get("input", {})
+                    # 如果 input 是 dict 且有 args，提取 args
+                    args = tool_input if isinstance(tool_input, dict) else {"input": str(tool_input)}
+                    yield _sse_event("tool_start", {
+                        "tool": event_name,
+                        "args": args if isinstance(args, dict) else {},
+                    })
+
+                # --- 工具执行完成 ---
+                elif event_type == "on_tool_end":
+                    output = event_data.get("output", "")
+                    # ToolMessage 对象：提取 .content 属性获得纯文本结果
+                    if hasattr(output, "content"):
+                        output_str = str(output.content)
+                    elif isinstance(output, str):
+                        output_str = output
+                    else:
+                        output_str = str(output)
+                    # 结果摘要（前 500 字符）
+                    result_preview = output_str[:500] + ("..." if len(output_str) > 500 else "")
+
+                    yield _sse_event("tool_end", {
+                        "tool": event_name,
+                        "result": result_preview,
+                    })
+
+                    # retrieve_knowledge 工具完成后，从缓存读取图片路径生成缩略图
+                    if event_name == "retrieve_knowledge":
+                        await asyncio.sleep(0)  # 让出事件循环
+                        image_entries = _tool_image_cache.pop("latest", [])
+                        if image_entries:
+                            # 按 file_path 去重
+                            seen = set()
+                            unique_entries = []
+                            for entry in image_entries:
+                                fp = entry.get("file_path", "")
+                                if fp and fp not in seen:
+                                    seen.add(fp)
+                                    unique_entries.append(entry)
+                            thumbs = []
+                            for entry in unique_entries:
+                                file_path = entry.get("file_path", "")
+                                file_name = entry.get("file_name", "")
+                                if file_path:
+                                    import os as _os
+                                    # 路径规范化：处理 ./ 和 ../ 前缀不一致的问题
+                                    # Chroma DB 中可能存储了带不同相对前缀的路径
+                                    resolved = _resolve_path(file_path)
+                                    if resolved and _os.path.exists(resolved):
+                                        try:
+                                            thumb_url = image_to_base64(resolved)
+                                            thumbs.append({
+                                                "file_name": file_name,
+                                                "thumb_url": thumb_url,
+                                            })
+                                        except Exception as e:
+                                            print(f"[WARN] 缩略图生成失败 {file_name}: {e}")
+                                    else:
+                                        print(f"[WARN] 图片文件不存在 (原始路径: {file_path}, 解析后: {resolved})")
+                            if thumbs:
+                                yield _sse_event("tool_images", {"images": thumbs})
+
+            # --- 完成 ---
+            yield _sse_event("done", {"thread_id": thread_id})
+
+        except Exception as e:
+            print(f"[Agent Stream] 错误: {e}")
+            yield _sse_event("error", {"message": str(e)})
+
+
+def _normalize_fp(file_path: str) -> str:
+    """规范化文件路径用于去重比较，去掉 ./ 和 ../ 前缀"""
+    cleaned = file_path
+    while cleaned.startswith("./") or cleaned.startswith("../"):
+        if cleaned.startswith("./"):
+            cleaned = cleaned[2:]
+        else:
+            cleaned = cleaned[3:]
+    return cleaned
+
+
+def _resolve_path(file_path: str) -> str | None:
+    """解析文件路径，处理 ./ 和 ../ 前缀不一致的问题。
+
+    Chroma DB 在不同次同步时可能存储了带不同前缀的路径：
+    - ./resources/img/photo.jpg
+    - ../resources/img/photo.jpg
+    - resources/img/photo.jpg
+
+    本函数尝试多种解析方式，返回第一个存在的路径。
+    """
+    import os as _os
+
+    candidates = [
+        file_path,                                          # 原始路径
+        file_path.lstrip("./"),                             # 去掉 ./
+        file_path.lstrip("../"),                            # 去掉 ../
+    ]
+    # 也尝试不断去掉 ../ 前缀
+    cleaned = file_path
+    while cleaned.startswith("../"):
+        cleaned = cleaned[3:]
+        if cleaned not in candidates:
+            candidates.append(cleaned)
+
+    for path in candidates:
+        if path and _os.path.exists(path):
+            return path
+    return None
+
+
+def _sse_event(event_type: str, data: dict[str, Any]) -> str:
+    """将数据格式化为 SSE 事件字符串"""
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def get_agent_service() -> AgentService:
