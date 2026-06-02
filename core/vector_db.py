@@ -11,8 +11,9 @@ from langchain_core.documents import Document
 from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from configures import ARK_API_KEY, EMBED_MODEL, VECTOR_DB_PATH, RES_DIR
+from configures import ARK_API_KEY, BM25_ENABLED, EMBED_MODEL, VECTOR_DB_PATH, RES_DIR
 from core.services import image_to_base64, generate_photo_tags
+from core.bm25_index import Bm25Index
 
 
 class ArkImageEmbeddings(Embeddings):
@@ -73,6 +74,8 @@ class VectorDBService:
             self.res_dir = RES_DIR
             self.embeddings = ArkImageEmbeddings()
             self.vector_store = None
+            self.bm25_index = Bm25Index()
+            self._bm25_enabled = BM25_ENABLED
             self._init_db()
             VectorDBService._initialized = True
 
@@ -223,6 +226,10 @@ class VectorDBService:
                 documents=all_documents, embedding=self.embeddings, persist_directory=self.db_path
             )
 
+        # 新文档入库后，使 BM25 索引失效，下次搜索时重建
+        self.bm25_index.invalidate()
+        print(f"[BM25] 索引已失效，将在下次搜索时重建")
+
         return {
             "status": "success",
             "message": f"成功添加 {len(all_documents)} 个文档块",
@@ -241,6 +248,11 @@ class VectorDBService:
         rerank_enabled=True,
         rerank_top_n=None,
     ):
+        """多路召回检索：向量匹配 + BM25 关键词匹配，合并去重后送入精排。
+
+        BM25 通道仅在 doc_type 为 None (any) 或 "text" 时触发；
+        doc_type="image" 时仅使用向量检索。
+        """
         if self.vector_store is None:
             return []
 
@@ -249,11 +261,52 @@ class VectorDBService:
             filter_clause["type"] = doc_type
 
         coarse_k = k * 2 if rerank_enabled else k
-        results_with_scores = self.vector_store.similarity_search_with_score(
-            query=query, k=coarse_k, filter=filter_clause if filter_clause else None
+
+        # ---- Channel 1: 向量匹配检索 ----
+        vector_results = self._vector_search(
+            query, coarse_k, filter_clause, scene_tags, style_tags, film_tags
         )
 
-        filtered_results = []
+        # ---- Channel 2: BM25 关键词检索（仅文本文档） ----
+        bm25_results = []
+        if self._bm25_enabled and doc_type in (None, "text"):
+            self._ensure_bm25_index()
+            if self.bm25_index.is_built:
+                bm25_results = self._bm25_search(
+                    query, coarse_k, scene_tags, style_tags, film_tags
+                )
+                # 打印 BM25 检索结果
+                self._print_log_bm25_results(bm25_results)
+
+        # ---- 合并去重 ----
+        merged = self._merge_deduplicate(vector_results, bm25_results)
+
+        # 打印合并去重后的结果
+        self._print_log_merged_results(merged, vector_results, bm25_results)
+
+        # ---- 精排 ----
+        if rerank_enabled and merged:
+            top_n = rerank_top_n if rerank_top_n is not None else k
+            merged = self._apply_rerank(query, merged, top_n)
+        elif not rerank_enabled:
+            merged = merged[:k]
+
+        return merged
+
+    def _vector_search(
+        self, query, k, filter_clause, scene_tags, style_tags, film_tags
+    ) -> list[dict]:
+        """向量相似度检索 + tag 后过滤。
+
+        Returns:
+            [{"document": Document, "score": float}, ...]
+            score 为 L2 距离（越低越相似）。
+        """
+        results_with_scores = self.vector_store.similarity_search_with_score(
+            query=query, k=k, filter=filter_clause if filter_clause else None
+        )
+
+        filtered = []
         for result, score in results_with_scores:
             match = True
 
@@ -279,18 +332,156 @@ class VectorDBService:
                         break
 
             if match:
-                filtered_results.append({"document": result, "score": float(score)})
+                filtered.append({"document": result, "score": float(score)})
 
-            if not rerank_enabled and len(filtered_results) >= k:
-                break
+        return filtered
 
-        if rerank_enabled and filtered_results:
-            top_n = rerank_top_n if rerank_top_n is not None else k
-            filtered_results = self._apply_rerank(query, filtered_results, top_n)
-        elif not rerank_enabled:
-            filtered_results = filtered_results[:k]
+    def _ensure_bm25_index(self) -> None:
+        """懒加载：首次搜索时从 Chroma 构建 BM25 索引。"""
+        if self.bm25_index.is_built or not self._bm25_enabled:
+            return
+        if self.vector_store is None:
+            return
 
-        return filtered_results
+        all_docs = self.vector_store.get()
+        documents = all_docs.get("documents", [])
+        metadatas = all_docs.get("metadatas", [])
+
+        text_docs = []
+        for doc_str, meta in zip(documents, metadatas):
+            if meta and meta.get("type") == "text":
+                text_docs.append(Document(page_content=doc_str, metadata=meta))
+
+        if text_docs:
+            print(f"[BM25] 构建索引: {len(text_docs)} 个文本块")
+            self.bm25_index.build(text_docs)
+        else:
+            print("[BM25] 没有文本文档，跳过索引构建")
+
+    def _bm25_search(
+        self, query, k, scene_tags, style_tags, film_tags
+    ) -> list[dict]:
+        """BM25 关键词检索 + tag 后过滤。
+
+        Returns:
+            [{"document": Document, "score": float}, ...]
+            score 为原始 BM25 分数（越高越相关）。
+        """
+        results = self.bm25_index.search(query, k=k)
+
+        if not any([scene_tags, style_tags, film_tags]):
+            return results
+
+        # tag 过滤（text 文档通常无 tag，但保持接口一致）
+        filtered = []
+        for item in results:
+            meta = item["document"].metadata
+            match = True
+            if scene_tags:
+                result_scene = meta.get("scene_tags", "")
+                for tag in scene_tags:
+                    if tag not in result_scene:
+                        match = False
+                        break
+            if match and style_tags:
+                result_style = meta.get("style_tags", "")
+                for tag in style_tags:
+                    if tag not in result_style:
+                        match = False
+                        break
+            if match and film_tags:
+                result_film = meta.get("film_tags", "")
+                for tag in film_tags:
+                    if tag not in result_film:
+                        match = False
+                        break
+            if match:
+                filtered.append(item)
+        return filtered
+
+    def _merge_deduplicate(
+        self, vector_results: list[dict], bm25_results: list[dict]
+    ) -> list[dict]:
+        """合并两个通道的结果并去重。
+
+        - 向量距离 (L2, 越低越好) → [0, 1] 相关性分数 (越高越好)
+        - BM25 原始分 (越高越好) → [0, 1] min-max 归一化
+        - 去重 key = (file_path, page_content[:200])，区分同一文件的不同块；
+          重复条目（同一块出现在两通道中）保留分数较高者。
+        """
+        # --- 归一化向量分数：L2 距离 → [0, 1] 相关性 ---
+        for r in vector_results:
+            distance = r["score"]
+            r["score"] = max(0.0, 1.0 - distance / 2.0)
+
+        # --- 归一化 BM25 分数：min-max → [0, 1] ---
+        if bm25_results:
+            scores = [r["score"] for r in bm25_results]
+            lo, hi = min(scores), max(scores)
+            rng = hi - lo
+            if rng > 0:
+                for r in bm25_results:
+                    r["score"] = (r["score"] - lo) / rng
+            else:
+                for r in bm25_results:
+                    r["score"] = 0.5
+        # 裁切防溢出
+        for r in bm25_results:
+            r["score"] = min(1.0, max(0.0, r["score"]))
+
+        # --- 去重：key = (normalized_path, content[:200]) ---
+        seen: dict[tuple, dict] = {}
+        all_items = vector_results + bm25_results
+        for item in all_items:
+            path = self.normalize_path(
+                item["document"].metadata.get("file_path", "")
+            )
+            content_prefix = item["document"].page_content[:200] if item["document"].page_content else ""
+            key = (path, content_prefix)
+            if key not in seen or item["score"] > seen[key]["score"]:
+                seen[key] = item
+
+        merged = sorted(seen.values(), key=lambda x: x["score"], reverse=True)
+        return merged
+
+    def _print_log_bm25_results(self, results: list[dict]) -> None:
+        """在控制台打印 BM25 检索结果。"""
+        print(f"\n{'='*60}")
+        print(f"[BM25] 检索结果: {len(results)} 条")
+        print(f"{'-'*60}")
+        for i, item in enumerate(results):
+            doc = item["document"]
+            file_name = doc.metadata.get("file_name", "?")
+            content_preview = doc.page_content[:80].replace("\n", " ")
+            print(f"  [{i+1}] score={item['score']:.4f}  file={file_name}")
+            print(f"      content: {content_preview}...")
+        if not results:
+            print("  (无结果)")
+        print(f"{'='*60}\n")
+
+    def _print_log_merged_results(
+        self,
+        merged: list[dict],
+        vector_results: list[dict],
+        bm25_results: list[dict],
+    ) -> None:
+        """在控制台打印合并去重后的结果。"""
+        print(f"\n{'='*60}")
+        print(f"[MERGE] 合并去重结果")
+        print(f"  向量通道: {len(vector_results)} 条  |  BM25通道: {len(bm25_results)} 条")
+        print(f"  合并去重后: {len(merged)} 条")
+        print(f"{'-'*60}")
+        for i, item in enumerate(merged):
+            doc = item["document"]
+            file_name = doc.metadata.get("file_name", "?")
+            doc_type = doc.metadata.get("type", "?")
+            content_preview = doc.page_content[:80].replace("\n", " ") if doc.page_content else "(img)"
+            print(f"  [{i+1}] score={item['score']:.4f}  type={doc_type}  file={file_name}")
+            if doc_type != "image":
+                print(f"      content: {content_preview}...")
+        if not merged:
+            print("  (无结果)")
+        print(f"{'='*60}\n")
 
     def _apply_rerank(self, query: str, documents: list[dict], top_n: int) -> list[dict]:
         """应用精排器对文档重排序"""

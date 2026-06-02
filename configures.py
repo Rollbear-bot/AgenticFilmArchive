@@ -34,6 +34,9 @@ RERANK_ALIBABA_MULTIMODAL_ENDPOINT = os.getenv(
 )
 RERANK_ALIBABA_API_KEY = os.getenv("RERANK_ALIBABA_API_KEY", "")
 
+# BM25 关键词检索开关
+BM25_ENABLED = os.getenv("BM25_ENABLED", "true").lower() == "true"
+
 
 class PROMPTS:
     IMAGE_TAGGER = """

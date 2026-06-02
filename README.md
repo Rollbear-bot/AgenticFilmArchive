@@ -184,7 +184,7 @@ python manage.py runserver
 ## 📝TODO
 
 - [x] 召回后精排rerank
-- [ ] BM25关键词匹配 + 多路召回
+- [x] BM25关键词匹配 + 多路召回
 - [ ] 多查询召回
 - [ ] 语义切分chunking
 - [ ] 多层Agent Memory
