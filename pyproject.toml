@@ -44,26 +44,22 @@ dependencies = [
     # Pin to 1.0.8 (the last safe release) to remain compatible with
     # langchain~=1.1.0's langgraph<1.1.0 constraint.
     "langgraph-prebuilt<1.0.9",
-
     # Web framework
     "django>=4.2,<6.0",
     "djangorestframework>=3.14.0,<4.0.0",
     "django-cors-headers>=4.0.0,<5.0.0",
-
     # AI / ML
     "volcengine-python-sdk~=5.0.6",
     "numpy~=2.2.6",
     "scikit-learn~=1.8.0",
-
     # Image processing
     "pillow~=11.3.0",
-
     # Utilities
     "python-dotenv~=1.2.1",
     "requests>=2.31.0",
-
     # Reranker
     "sentence-transformers>=3.0.0",
+    "pytest>=9.0.3",
 ]
 
 [project.optional-dependencies]

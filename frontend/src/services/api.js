@@ -48,17 +48,6 @@ const api = {
   sendChatMessage(message) {
     return this.request('POST', '/chat/', { message, include_resources: true });
   },
-
-  sendAgentMessage(message, threadId = null) {
-    const body = { message };
-    if (threadId) body.thread_id = threadId;
-    return this.request('POST', '/agent/chat/', body);
-  },
-
-  getChatHistory() {
-    return this.request('GET', '/chat/history/');
-  },
-
   async sendAgentMessageStream(message, threadId, callbacks) {
     const url = `${API_BASE}/agent/chat/stream/`;
     const body = { message };
