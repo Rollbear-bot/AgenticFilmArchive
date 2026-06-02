@@ -1,11 +1,13 @@
 """
 API Serializers - 数据序列化器
 """
+
 from rest_framework import serializers
 
 
 class ResourceSerializer(serializers.Serializer):
     """资源序列化器"""
+
     id = serializers.IntegerField(read_only=True)
     file_name = serializers.CharField()
     file_path = serializers.CharField()
@@ -23,6 +25,7 @@ class ResourceSerializer(serializers.Serializer):
 
 class ResourceListSerializer(serializers.Serializer):
     """资源列表响应序列化器"""
+
     total = serializers.IntegerField()
     image_count = serializers.IntegerField(required=False, default=0)
     doc_count = serializers.IntegerField(required=False, default=0)
@@ -33,32 +36,18 @@ class ResourceListSerializer(serializers.Serializer):
 
 class ResourceSearchSerializer(serializers.Serializer):
     """资源搜索请求序列化器"""
+
     query = serializers.CharField(required=True)
     k = serializers.IntegerField(required=False, default=10)
-    doc_type = serializers.ChoiceField(
-        choices=['any', 'image', 'text'],
-        required=False,
-        default='any'
-    )
-    scene_tags = serializers.ListField(
-        child=serializers.CharField(),
-        required=False,
-        default=list
-    )
-    style_tags = serializers.ListField(
-        child=serializers.CharField(),
-        required=False,
-        default=list
-    )
-    film_tags = serializers.ListField(
-        child=serializers.CharField(),
-        required=False,
-        default=list
-    )
+    doc_type = serializers.ChoiceField(choices=["any", "image", "text"], required=False, default="any")
+    scene_tags = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    style_tags = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    film_tags = serializers.ListField(child=serializers.CharField(), required=False, default=list)
 
 
 class ChatMessageSerializer(serializers.Serializer):
     """对话消息序列化器"""
+
     message = serializers.CharField(required=True)
     history_id = serializers.CharField(required=False, allow_null=True)
     include_resources = serializers.BooleanField(required=False, default=True)
@@ -66,30 +55,33 @@ class ChatMessageSerializer(serializers.Serializer):
 
 class ChatResponseSerializer(serializers.Serializer):
     """对话响应序列化器"""
+
     answer = serializers.CharField()
-    resources_used = serializers.ListField(
-        child=serializers.DictField(),
-        required=False,
-        default=list
-    )
+    resources_used = serializers.ListField(child=serializers.DictField(), required=False, default=list)
     history_id = serializers.CharField(required=False)
+
+
+class AgentChatMessageSerializer(serializers.Serializer):
+    """Agent 对话消息序列化器"""
+
+    message = serializers.CharField(required=True)
+    thread_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
 
 class ChatHistorySerializer(serializers.Serializer):
     """对话历史序列化器"""
+
     id = serializers.IntegerField()
     session_id = serializers.CharField()
     user_message = serializers.CharField()
     ai_message = serializers.CharField()
-    resources_used = serializers.ListField(
-        child=serializers.CharField(),
-        required=False
-    )
+    resources_used = serializers.ListField(child=serializers.CharField(), required=False)
     created_at = serializers.DateTimeField()
 
 
 class SyncResponseSerializer(serializers.Serializer):
     """同步响应序列化器"""
+
     status = serializers.CharField()
     files_scanned = serializers.IntegerField()
     files_added = serializers.IntegerField()
@@ -99,6 +91,7 @@ class SyncResponseSerializer(serializers.Serializer):
 
 class HealthCheckSerializer(serializers.Serializer):
     """健康检查响应序列化器"""
+
     status = serializers.CharField()
     version = serializers.CharField()
     database = serializers.CharField()
@@ -107,6 +100,7 @@ class HealthCheckSerializer(serializers.Serializer):
 
 class ConfigSerializer(serializers.Serializer):
     """配置信息序列化器"""
+
     app_name = serializers.CharField()
     version = serializers.CharField()
     resource_dir = serializers.CharField()

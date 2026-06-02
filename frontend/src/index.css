@@ -346,6 +346,86 @@ body {
   color: #27ae60;
 }
 
+.tool-args {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: #888;
+}
+
+.tool-arg {
+  display: inline-block;
+  padding: 2px 6px;
+  background: #eef;
+  border-radius: 4px;
+}
+
+/* Chat Mode Bar */
+.chat-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #eee;
+  flex-wrap: wrap;
+}
+
+.mode-toggle {
+  display: flex;
+  background: #e0e0e0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mode-btn {
+  padding: 6px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #666;
+  transition: all 0.2s;
+}
+
+.mode-btn-active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.new-session-btn {
+  padding: 6px 14px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #666;
+  transition: all 0.2s;
+}
+
+.new-session-btn:hover {
+  border-color: #667eea;
+  color: #667eea;
+}
+
+.mode-hint {
+  font-size: 0.8rem;
+  color: #999;
+  margin-left: auto;
+}
+
+/* Agent Info Sidebar */
+.agent-info h3 {
+  font-size: 1rem;
+  color: #1a1a2e;
+  margin-bottom: 12px;
+  padding-top: 16px;
+  border-top: 1px solid #eee;
+}
+
 /* Typing Indicator */
 .typing-indicator {
   display: flex;

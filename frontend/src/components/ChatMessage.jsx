@@ -1,6 +1,6 @@
 import { formatMessage, formatTime } from '../utils/format';
 
-function ChatMessage({ message }) {
+function ChatMessage({ message, agentMode = false }) {
   const isUser = message.role === 'user';
 
   return (
@@ -20,6 +20,16 @@ function ChatMessage({ message }) {
               <div key={index} className="tool-call">
                 <span className="tool-icon">🔧</span>
                 <span className="tool-name">{tool.tool}</span>
+                {tool.args && Object.keys(tool.args).length > 0 && (
+                  <div className="tool-args">
+                    {Object.entries(tool.args).map(([key, value]) => (
+                      <span key={key} className="tool-arg">
+                        <strong>{key}</strong>: {String(value).substring(0, 80)}
+                        {String(value).length > 80 ? '...' : ''}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {tool.query && (
                   <span style={{ color: '#999', marginLeft: '8px' }}>
                     查询: "{tool.query}"
