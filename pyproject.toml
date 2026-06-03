@@ -60,6 +60,7 @@ dependencies = [
     # Reranker
     "sentence-transformers>=3.0.0",
     "pytest>=9.0.3",
+    "djangorestframework-stubs>=3.17.0",
 ]
 
 [project.optional-dependencies]

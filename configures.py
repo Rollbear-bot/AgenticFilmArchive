@@ -37,6 +37,10 @@ RERANK_ALIBABA_API_KEY = os.getenv("RERANK_ALIBABA_API_KEY", "")
 # BM25 关键词检索开关
 BM25_ENABLED = os.getenv("BM25_ENABLED", "true").lower() == "true"
 
+# 多查询召回开关
+MULTI_QUERY_ENABLED = os.getenv("MULTI_QUERY_ENABLED", "true").lower() == "true"
+MULTI_QUERY_COUNT = int(os.getenv("MULTI_QUERY_COUNT", "3"))
+
 
 class PROMPTS:
     IMAGE_TAGGER = """
@@ -60,4 +64,19 @@ class PROMPTS:
     输出：公园,旋转木马;生活;彩色负片
     
     注意：标签应该尽可能简短，你必须按照上面指定的格式返回标签，不要返回其他内容。
+    """
+
+    QUERY_EXPANDER = """
+    你是一位搜索查询优化专家。请根据用户的原始查询，生成 {count} 个不同的搜索查询词，用于从胶片摄影知识库中检索相关内容。
+
+    要求：
+    1. 查询词应覆盖原始查询的不同角度、同义表述和关键词组合
+    2. 每个查询词应独立、完整，适合语义相似度检索
+    3. 保持与用户原始意图的一致性，不要引入无关主题
+    4. 如果文档类型为 image，查询词应侧重视觉描述角度
+    5. 如果文档类型为 text，查询词应侧重关键词提取和概念角度
+    6. 不要返回编号、解释或其他内容，只返回查询词列表，每行一个
+
+    原始查询：{query}
+    文档类型：{doc_type}
     """

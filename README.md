@@ -217,7 +217,7 @@ python manage.py runserver
 
 - [x] 召回后精排rerank
 - [x] BM25关键词匹配 + 多路召回
-- [ ] 多查询召回
+- [x] 多查询召回
 - [ ] 语义切分chunking
 - [ ] 多层Agent Memory
 - [ ] 智能相册自动分类

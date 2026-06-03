@@ -11,7 +11,17 @@ from langchain_core.documents import Document
 from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from configures import ARK_API_KEY, BM25_ENABLED, EMBED_MODEL, VECTOR_DB_PATH, RES_DIR
+from configures import (
+    ARK_API_KEY,
+    ARK_ENDPOINT,
+    BM25_ENABLED,
+    CHAT_MODEL,
+    EMBED_MODEL,
+    MULTI_QUERY_COUNT,
+    MULTI_QUERY_ENABLED,
+    RES_DIR,
+    VECTOR_DB_PATH,
+)
 from core.services import image_to_base64, generate_photo_tags
 from core.bm25_index import Bm25Index
 
@@ -86,6 +96,40 @@ class VectorDBService:
             self.vector_store = Chroma(persist_directory=self.db_path, embedding_function=self.embeddings)
         else:
             print(f"[初始化] 向量数据库不存在")
+
+    def _generate_query_terms(self, query: str, doc_type: str | None) -> list[str]:
+        """使用 LLM 生成多查询词。原始查询始终放在第一位。
+
+        注意：此处直接使用 Ark SDK 而非 LangChain ChatOpenAI，
+        避免在 LangGraph Agent 的工具执行期间产生额外的 on_chat_model_stream
+        事件，导致查询词被误送到前端 SSE 流。
+        """
+        from configures import PROMPTS
+
+        try:
+            client = Ark(base_url=ARK_ENDPOINT, api_key=ARK_API_KEY)
+            prompt = PROMPTS.QUERY_EXPANDER.format(
+                count=MULTI_QUERY_COUNT,
+                query=query,
+                doc_type=doc_type or "any",
+            )
+            completion = client.chat.completions.create(
+                model=CHAT_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=256,
+            )
+            content = completion.choices[0].message.content
+            terms = [line.strip() for line in content.strip().split("\n") if line.strip()]
+            # 去重并确保原始查询在首位
+            unique_terms = [query]
+            for t in terms:
+                if t != query and t not in unique_terms:
+                    unique_terms.append(t)
+            return unique_terms[:MULTI_QUERY_COUNT]
+        except Exception as e:
+            print(f"[多查询] 生成查询词失败: {e}")
+            return [query]
 
     def load_images(self, img_dir):
         print(f"\n开始加载图片: {img_dir}")
@@ -237,6 +281,34 @@ class VectorDBService:
             "skipped": skipped_count,
         }
 
+    def _retrieve_raw(
+        self,
+        query: str,
+        k: int,
+        doc_type: str | None,
+        scene_tags: list | None,
+        style_tags: list | None,
+        film_tags: list | None,
+    ) -> tuple[list[dict], list[dict]]:
+        """执行原始检索：向量搜索 + BM25（如适用），返回未归一化的原始结果。"""
+        filter_clause = {}
+        if doc_type:
+            filter_clause["type"] = doc_type
+
+        vector_results = self._vector_search(
+            query, k, filter_clause, scene_tags, style_tags, film_tags
+        )
+
+        bm25_results = []
+        if self._bm25_enabled and doc_type in (None, "text"):
+            self._ensure_bm25_index()
+            if self.bm25_index.is_built:
+                bm25_results = self._bm25_search(
+                    query, k, scene_tags, style_tags, film_tags
+                )
+
+        return vector_results, bm25_results
+
     def search(
         self,
         query,
@@ -247,8 +319,12 @@ class VectorDBService:
         film_tags=None,
         rerank_enabled=True,
         rerank_top_n=None,
+        multi_query=None,
     ):
         """多路召回检索：向量匹配 + BM25 关键词匹配，合并去重后送入精排。
+
+        支持多查询召回：对原始查询生成多个查询词，每个查询词独立检索，
+        最后合并所有结果去重，再用原始查询精排。
 
         BM25 通道仅在 doc_type 为 None (any) 或 "text" 时触发；
         doc_type="image" 时仅使用向量检索。
@@ -256,36 +332,48 @@ class VectorDBService:
         if self.vector_store is None:
             return []
 
-        filter_clause = {}
-        if doc_type:
-            filter_clause["type"] = doc_type
-
+        use_multi_query = multi_query if multi_query is not None else MULTI_QUERY_ENABLED
         coarse_k = k * 2 if rerank_enabled else k
 
-        # ---- Channel 1: 向量匹配检索 ----
-        vector_results = self._vector_search(
-            query, coarse_k, filter_clause, scene_tags, style_tags, film_tags
-        )
+        if use_multi_query:
+            query_terms = self._generate_query_terms(query, doc_type)
+            print(f"[多查询] 查询词列表: {query_terms}")
 
-        # ---- Channel 2: BM25 关键词检索（仅文本文档） ----
-        bm25_results = []
-        if self._bm25_enabled and doc_type in (None, "text"):
-            self._ensure_bm25_index()
-            if self.bm25_index.is_built:
-                bm25_results = self._bm25_search(
-                    query, coarse_k, scene_tags, style_tags, film_tags
+            all_vector_results = []
+            all_bm25_results = []
+
+            for term in query_terms:
+                v_results, b_results = self._retrieve_raw(
+                    term, coarse_k, doc_type, scene_tags, style_tags, film_tags
                 )
-                # 打印 BM25 检索结果
+                all_vector_results.extend(v_results)
+                all_bm25_results.extend(b_results)
+                print(f"[多查询] 查询词 '{term}': 向量={len(v_results)} 条, BM25={len(b_results)} 条")
+
+            # 打印 BM25 检索结果
+            if all_bm25_results:
+                self._print_log_bm25_results(all_bm25_results)
+
+            merged = self._merge_deduplicate(all_vector_results, all_bm25_results)
+            self._print_log_merged_results(merged, all_vector_results, all_bm25_results)
+        else:
+            vector_results, bm25_results = self._retrieve_raw(
+                query, coarse_k, doc_type, scene_tags, style_tags, film_tags
+            )
+
+            if bm25_results:
                 self._print_log_bm25_results(bm25_results)
 
-        # ---- 合并去重 ----
-        merged = self._merge_deduplicate(vector_results, bm25_results)
+            merged = self._merge_deduplicate(vector_results, bm25_results)
+            self._print_log_merged_results(merged, vector_results, bm25_results)
 
-        # 打印合并去重后的结果
-        self._print_log_merged_results(merged, vector_results, bm25_results)
-
-        # ---- 精排 ----
+        # ---- 精排前安全截断（避免多查询导致候选数超载） ----
         if rerank_enabled and merged:
+            safe_limit = 35 if doc_type == "image" else 80
+            if len(merged) > safe_limit:
+                print(f"[多查询] 结果数 {len(merged)} 超过安全上限 {safe_limit}，截断后精排")
+                merged = merged[:safe_limit]
+
             top_n = rerank_top_n if rerank_top_n is not None else k
             merged = self._apply_rerank(query, merged, top_n)
         elif not rerank_enabled:
