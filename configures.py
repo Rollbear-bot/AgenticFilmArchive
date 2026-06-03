@@ -41,6 +41,10 @@ BM25_ENABLED = os.getenv("BM25_ENABLED", "true").lower() == "true"
 MULTI_QUERY_ENABLED = os.getenv("MULTI_QUERY_ENABLED", "true").lower() == "true"
 MULTI_QUERY_COUNT = int(os.getenv("MULTI_QUERY_COUNT", "3"))
 
+# Chunk 切分配置
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
+
 
 class PROMPTS:
     IMAGE_TAGGER = """

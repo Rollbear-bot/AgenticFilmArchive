@@ -9,13 +9,13 @@ from volcenginesdkarkruntime import Ark
 from langchain_core.embeddings import Embeddings
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
 from configures import (
     ARK_API_KEY,
     ARK_ENDPOINT,
     BM25_ENABLED,
     CHAT_MODEL,
+    CHUNK_OVERLAP,
+    CHUNK_SIZE,
     EMBED_MODEL,
     MULTI_QUERY_COUNT,
     MULTI_QUERY_ENABLED,
@@ -25,6 +25,7 @@ from configures import (
 from core.pdf_processor import PDFContentBlock, PDFProcessor
 from core.services import image_to_base64, generate_photo_tags
 from core.bm25_index import Bm25Index
+from core.text_splitter import SemanticMarkdownSplitter
 
 
 class ArkImageEmbeddings(Embeddings):
@@ -248,15 +249,11 @@ class VectorDBService:
                         "file_path": file_path,
                         "type": "text",
                         "format": "markdown",
-                        "is_primary": True,  # 第一个块标记为primary
                     },
                 )
 
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+                text_splitter = SemanticMarkdownSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
                 chunks = text_splitter.split_documents([doc])
-                # 标记第一个块为primary
-                if chunks:
-                    chunks[0].metadata["is_primary"] = True
                 all_documents.extend(chunks)
             except Exception as e:
                 print(f"处理文档失败 {file_name}: {e}")
@@ -355,12 +352,8 @@ class VectorDBService:
                         },
                     )
 
-                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+                    text_splitter = SemanticMarkdownSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
                     chunks = text_splitter.split_documents([text_doc])
-                    if chunks:
-                        chunks[0].metadata["is_primary"] = True
-                        for chunk in chunks:
-                            chunk.metadata["source_pdf"] = file_path
                     text_documents.extend(chunks)
 
                 # 处理图片描述块：每个描述作为独立Document
@@ -668,15 +661,22 @@ class VectorDBService:
         for r in bm25_results:
             r["score"] = min(1.0, max(0.0, r["score"]))
 
-        # --- 去重：key = (normalized_path, content[:200]) ---
+        # --- 去重：优先使用 (type, normalized_path, chunk_id)，兼容存量数据回退到 content[:200] ---
         seen: dict[tuple, dict] = {}
         all_items = vector_results + bm25_results
         for item in all_items:
-            path = self.normalize_path(
-                item["document"].metadata.get("file_path", "")
-            )
-            content_prefix = item["document"].page_content[:200] if item["document"].page_content else ""
-            key = (path, content_prefix)
+            doc = item["document"]
+            path = self.normalize_path(doc.metadata.get("file_path", ""))
+            doc_type = doc.metadata.get("type", "")
+            chunk_id = doc.metadata.get("chunk_id")
+
+            if chunk_id is not None:
+                key = (doc_type, path, chunk_id)
+            else:
+                # 存量数据兼容：无 chunk_id 时回退到旧逻辑
+                content_prefix = doc.page_content[:200] if doc.page_content else ""
+                key = (doc_type, path, content_prefix)
+
             if key not in seen or item["score"] > seen[key]["score"]:
                 seen[key] = item
 
