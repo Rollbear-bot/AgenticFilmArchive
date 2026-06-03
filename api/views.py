@@ -216,14 +216,21 @@ def resource_sync_api(request):
 
     img_result = vec_db.load_images(f"{RES_DIR}/img")
     doc_result = vec_db.load_text_documents(f"{RES_DIR}/doc")
+    pdf_result = vec_db.load_pdf_documents(f"{RES_DIR}/pdf")
 
     total_scanned = (
         img_result.get("count", 0)
         + img_result.get("skipped", 0)
         + doc_result.get("count", 0)
         + doc_result.get("skipped", 0)
+        + pdf_result.get("count", 0)
+        + pdf_result.get("skipped", 0)
     )
-    total_added = img_result.get("count", 0) + doc_result.get("count", 0)
+    total_added = (
+        img_result.get("count", 0)
+        + doc_result.get("count", 0)
+        + pdf_result.get("count", 0)
+    )
     total_failed = 0
 
     data = {

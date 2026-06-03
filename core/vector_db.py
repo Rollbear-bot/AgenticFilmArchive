@@ -22,6 +22,7 @@ from configures import (
     RES_DIR,
     VECTOR_DB_PATH,
 )
+from core.pdf_processor import PDFContentBlock, PDFProcessor
 from core.services import image_to_base64, generate_photo_tags
 from core.bm25_index import Bm25Index
 
@@ -277,6 +278,156 @@ class VectorDBService:
         return {
             "status": "success",
             "message": f"成功添加 {len(all_documents)} 个文档块",
+            "count": len(all_documents),
+            "skipped": skipped_count,
+        }
+
+    def load_pdf_documents(self, doc_dir):
+        """加载PDF文档到向量数据库。
+
+        对PDF中的文本、图片、表格分别提取并结构化处理：
+        - 文本：按段落提取后切分chunk，保留页码和源PDF路径
+        - 图片：提取后由多模态模型生成描述文本，type="pdf_image"
+        - 表格：转为Markdown+JSON格式，type="pdf_table"
+
+        所有内容块的metadata均包含source_pdf指向源文件，便于聚合展示。
+        PDF图片与知识库照片性质不同，严禁使用type="image"。
+        """
+        print(f"\n开始加载PDF文档: {doc_dir}")
+
+        if not os.path.exists(doc_dir):
+            return {"status": "warning", "message": "PDF目录不存在", "count": 0}
+
+        pdf_files = [os.path.join(doc_dir, f) for f in os.listdir(doc_dir) if f.lower().endswith(".pdf")]
+
+        if not pdf_files:
+            return {"status": "warning", "message": "未找到PDF文件", "count": 0}
+
+        existing_file_paths = set()
+        if self.vector_store is not None:
+            existing_docs = self.vector_store.get()
+            for metadata in existing_docs.get("metadatas", []):
+                if metadata and "file_path" in metadata:
+                    existing_file_paths.add(metadata["file_path"])
+
+        all_documents = []
+        skipped_count = 0
+
+        for file_path in pdf_files:
+            file_name = os.path.basename(file_path)
+            if file_path in existing_file_paths:
+                skipped_count += 1
+                continue
+
+            try:
+                processor = PDFProcessor(file_path)
+                blocks, report = processor.process()
+
+                if report["errors"]:
+                    print(f"[PDF] {file_name} 处理报告: {report}")
+
+                if not blocks:
+                    print(f"[PDF] {file_name} 未提取到有效内容")
+                    continue
+
+                # 分离文本块、图片描述块、表格块
+                text_blocks = [b for b in blocks if b.type == "pdf_text"]
+                image_blocks = [b for b in blocks if b.type == "pdf_image"]
+                table_blocks = [b for b in blocks if b.type == "pdf_table"]
+
+                # 处理文本块：合并后切分
+                text_documents = []
+                if text_blocks:
+                    # 按页码排序后合并为单一文本（保留页码分隔）
+                    text_blocks.sort(key=lambda b: b.page_number)
+                    full_text = "\n\n".join(
+                        f"[第{b.page_number}页]\n{b.content}" for b in text_blocks
+                    )
+
+                    text_doc = Document(
+                        page_content=full_text,
+                        metadata={
+                            "file_name": file_name,
+                            "file_path": file_path,
+                            "type": "pdf_text",
+                            "source_pdf": file_path,
+                            "is_primary": True,
+                        },
+                    )
+
+                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+                    chunks = text_splitter.split_documents([text_doc])
+                    if chunks:
+                        chunks[0].metadata["is_primary"] = True
+                        for chunk in chunks:
+                            chunk.metadata["source_pdf"] = file_path
+                    text_documents.extend(chunks)
+
+                # 处理图片描述块：每个描述作为独立Document
+                image_documents = []
+                for block in image_blocks:
+                    image_documents.append(
+                        Document(
+                            page_content=block.content,
+                            metadata={
+                                "file_name": file_name,
+                                "file_path": file_path,
+                                "type": "pdf_image",
+                                "source_pdf": file_path,
+                                "page_number": block.page_number,
+                                "is_primary": False,
+                            },
+                        )
+                    )
+
+                # 处理表格块：每个表格作为独立Document
+                table_documents = []
+                for block in table_blocks:
+                    table_documents.append(
+                        Document(
+                            page_content=block.content,
+                            metadata={
+                                "file_name": file_name,
+                                "file_path": file_path,
+                                "type": "pdf_table",
+                                "source_pdf": file_path,
+                                "page_number": block.page_number,
+                                "is_primary": False,
+                            },
+                        )
+                    )
+
+                all_documents.extend(text_documents)
+                all_documents.extend(image_documents)
+                all_documents.extend(table_documents)
+
+                print(
+                    f"[PDF] {file_name}: "
+                    f"文本块={len(text_documents)}, "
+                    f"图片描述={len(image_documents)}, "
+                    f"表格={len(table_documents)}"
+                )
+
+            except Exception as e:
+                print(f"处理PDF失败 {file_name}: {e}")
+
+        if not all_documents:
+            return {"status": "success", "message": "没有新PDF文档", "count": 0, "skipped": skipped_count}
+
+        if self.vector_store is not None:
+            self.vector_store.add_documents(all_documents)
+        else:
+            self.vector_store = Chroma.from_documents(
+                documents=all_documents, embedding=self.embeddings, persist_directory=self.db_path
+            )
+
+        # 新文档入库后，使 BM25 索引失效
+        self.bm25_index.invalidate()
+        print(f"[BM25] 索引已失效，将在下次搜索时重建")
+
+        return {
+            "status": "success",
+            "message": f"成功添加 {len(all_documents)} 个PDF内容块",
             "count": len(all_documents),
             "skipped": skipped_count,
         }
