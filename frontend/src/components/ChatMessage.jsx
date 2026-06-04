@@ -41,6 +41,17 @@ function ChatMessage({ message, agentMode = false }) {
           </div>
         )}
 
+        {/* Agent streaming loading: no text content yet */}
+        {message.isStreaming && !message.content && (
+          <div className="chat-message-bubble">
+            <div className="typing-indicator">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+          </div>
+        )}
+
         {/* Text content bubble */}
         {message.content && (
           <div

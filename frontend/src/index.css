@@ -6,6 +6,11 @@
   box-sizing: border-box;
 }
 
+:root {
+  --tray-radius: 12px;
+  --tray-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   background: #f8f9fa;
@@ -85,8 +90,8 @@ body {
 /* Cards */
 .card {
   background: white;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  border-radius: var(--tray-radius);
+  box-shadow: var(--tray-shadow);
   padding: 24px;
   margin-bottom: 20px;
 }
@@ -244,15 +249,15 @@ body {
   display: grid;
   grid-template-columns: 1fr 280px;
   gap: 24px;
-  height: calc(100vh - 60px - 24px - 24px - 52px);
+  height: calc(100vh - 60px - 24px - 24px);
   min-height: 500px;
   overflow: hidden;
 }
 
 .chat-messages {
   background: white;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  border-radius: var(--tray-radius);
+  box-shadow: var(--tray-shadow);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -308,8 +313,8 @@ body {
 }
 
 .chat-message-time {
-  font-size: 0.8rem;
-  color: #999;
+  font-size: 0.75rem;
+  color: #aaa;
   margin-top: 4px;
 }
 
@@ -487,8 +492,8 @@ body {
 /* Chat Sidebar */
 .chat-sidebar {
   background: white;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  border-radius: var(--tray-radius);
+  box-shadow: var(--tray-shadow);
   padding: 20px;
   overflow-y: auto;
 }

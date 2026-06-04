@@ -24,15 +24,6 @@ function App() {
             <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </main>
-        <footer style={{
-          background: '#1a1a2e',
-          color: 'rgba(255,255,255,0.7)',
-          textAlign: 'center',
-          padding: '16px',
-          fontSize: '0.9rem'
-        }}>
-          胶片摄影归档系统 v1.0 | Powered by AI Agent
-        </footer>
       </div>
     </BrowserRouter>
   );

@@ -4,5 +4,9 @@ export function formatMessage(content) {
 }
 
 export function formatTime(date) {
-  return new Date(date).toLocaleTimeString('zh-CN');
+  return new Date(date).toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 }
