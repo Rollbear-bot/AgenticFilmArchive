@@ -24,4 +24,12 @@ urlpatterns = [
     path("agent/chat/", views.agent_chat_api, name="agent_chat_api"),
     # Agent 流式对话接口（SSE）
     path("agent/chat/stream/", views.agent_chat_stream_api, name="agent_chat_stream_api"),
+    # 对话管理接口
+    path("conversations/", views.conversation_list_api, name="conversation_list"),
+    path("conversations/create/", views.conversation_create_api, name="conversation_create"),
+    path("conversations/<str:conversation_id>/", views.conversation_detail_api, name="conversation_detail"),
+    path("conversations/<str:conversation_id>/delete/", views.conversation_delete_api, name="conversation_delete"),
+    # 长期记忆接口
+    path("memory/", views.memory_read_api, name="memory_read"),
+    path("memory/write/", views.memory_write_api, name="memory_write"),
 ]

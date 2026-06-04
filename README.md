@@ -2,10 +2,11 @@
 
 ## 🚀Features
 
-- **多模态知识库**：支持将照片和文本文档（如摄影技法指南）存储到向量数据库中
+- **多模态知识库**：支持照片、Markdown 文本文档、PDF 文档（文本/图片/表格混合提取）存储到向量数据库
 - **自动标签生成**：为照片自动生成拍摄场景、拍摄风格和胶片特征标签
+- **Agent 多层记忆机制**：长期记忆（跨对话用户偏好持久化）+ 对话持久化（JSON 文件存储，服务器重启后可恢复）
 - **基于向量和标签的混合检索**：支持按场景标签、风格标签和胶片特征标签过滤检索结果
-- **通过自然语言交互**：通过自然语言向Agent描述需求，Agent会根据需要通过Tool Using方式检索知识库
+- **通过自然语言交互**：通过自然语言向 Agent 描述需求，Agent 根据需要通过 Tool Using 方式检索知识库、读取记忆
 
 
 ## 🔧系统架构
@@ -14,16 +15,20 @@
 
 1. **资源层**
    - 图片资源：存储在`resources/img/`目录下，支持多级子目录组织
-   - 文档资源：存储在`resources/doc/`目录下，支持Markdown格式文档
+   - 文档资源：存储在`resources/doc/`目录下，支持 Markdown 和 PDF 格式
 
-2. **向量处理层**
+2. **文档处理层**
    - `core/vector_db.py`：向量数据库核心功能，封装Chroma与Ark多模态嵌入
    - `core/bm25_index.py`：BM25关键词检索索引，支持稀疏向量多路召回
    - `core/reranker.py`：多策略结果精排（alibaba/local/none）
+   - `core/pdf_processor.py`：PDF文档解析，提取文本/图片（多模态模型生成描述）/表格（转Markdown）
+   - `core/text_splitter.py`：语义切分（SemanticMarkdownSplitter），按标题层级切分，过长章节回退固定长度切分
 
 3. **检索与生成层**
-   - `core/agent_service.py`：LangChain ReAct Agent，通过Tool Using检索知识库并流式输出
+   - `core/agent_service.py`：LangGraph ReAct Agent，通过Tool Using检索知识库并流式输出，支持 `read_memory`/`write_memory` 长期记忆工具
    - `core/chat_service.py`：RAG对话服务（非Agent路径）
+   - `core/memory_manager.py`：长期记忆管理，Markdown 文件存储，跨对话存取用户偏好
+   - `core/conversation_store.py`：对话持久化，JSON 文件 CRUD，服务器重启后回放恢复 LangGraph checkpoint
 
 4. **工具层**
    - `core/services.py`：提供图片转base64、照片标签生成等工具函数
@@ -40,13 +45,23 @@
 flowchart TD
     IMG_IN([图像输入<br/>jpg png])
     TXT_IN([文本输入<br/>md 文件])
+    PDF_IN([PDF 输入<br/>pdf 文件])
 
     IMG_IN --> SCAN[图像扫描<br/>os.walk]
     SCAN --> TAG[生成标签<br/>Ark Vision API]
     TAG --> B64[Base64 编码<br/>image_to_base64]
 
     TXT_IN --> MD_LOAD[Markdown 加载器]
-    MD_LOAD --> SPLIT[文本切分<br/>chunk_size=1000]
+    MD_LOAD --> SPLIT[语义切分<br/>SemanticMarkdownSplitter]
+
+    PDF_IN --> PDF_PROCESS[PDF 解析<br/>core/pdf_processor.py]
+    PDF_PROCESS --> PDF_BLOCKS{提取内容类型}
+    PDF_BLOCKS -->|文本| PDF_TXT[pdf_text]
+    PDF_BLOCKS -->|图片| PDF_IMG[pdf_image<br/>多模态模型生成描述]
+    PDF_BLOCKS -->|表格| PDF_TBL[pdf_table<br/>表格转 Markdown]
+    PDF_TXT --> SPLIT
+    PDF_IMG --> EMBED
+    PDF_TBL --> SPLIT
 
     B64 --> EMBED[ArkImageEmbeddings]
     SPLIT --> EMBED
@@ -70,11 +85,16 @@ flowchart TD
         TOOL_CALL -->|retrieve_knowledge| RECALL_Q[查询嵌入]
         TOOL_CALL -->|analyze_image| VISION[Vision API<br/>图片内容分析]
         TOOL_CALL -->|search_by_tags| TAG_DIRECT[标签直接筛选]
+        TOOL_CALL -->|read_memory| MEM_READ[读取长期记忆<br/>data/memory.md]
+        TOOL_CALL -->|write_memory| MEM_WRITE[写入长期记忆<br/>data/memory.md]
         RANKED --> OBS[Observation]
         VISION --> OBS
         TAG_DIRECT --> OBS
+        MEM_READ --> OBS
+        MEM_WRITE --> OBS
         OBS --> AGENT
         AGENT --> SSE[SSE 流式推送<br/>thinking / text / tool / tool_images / done]
+        AGENT -.->|对话持久化| CONV_STORE[(JSON 对话存储<br/>data/conversations/)]
     end
 
     subgraph RAG_PATH["RAG 路径 (直接检索)"]
@@ -119,11 +139,15 @@ AgenticFilmArchive/
 │   ├── sse.py            # SSE流式传输
 │   └── urls.py
 ├── core/                 # 核心业务逻辑
-│   ├── agent_service.py  # ReAct Agent服务
+│   ├── agent_service.py  # ReAct Agent服务（含长期记忆工具）
 │   ├── vector_db.py      # 向量数据库服务
 │   ├── chat_service.py   # AI对话服务
 │   ├── bm25_index.py     # BM25关键词检索
 │   ├── reranker.py       # 多策略精排
+│   ├── pdf_processor.py  # PDF文档解析（文本/图片/表格）
+│   ├── text_splitter.py  # Markdown语义切分
+│   ├── memory_manager.py # 长期记忆管理（Markdown文件）
+│   ├── conversation_store.py  # 对话持久化（JSON文件）
 │   ├── services.py       # 图片处理与标签生成
 │   └── views.py          # 前端入口视图
 ├── frontend/             # React前端应用（Vite构建）
@@ -211,13 +235,13 @@ python manage.py runserver
 2. 您的文件会通过Ark API上传到火山引擎，请阅读火山引擎的隐私政策
 3. 首次运行时，系统会扫描`resources`目录并构建向量数据库，首次初始化可能需要较长时间
 4. 支持的图片格式：jpg、jpeg、png
-5. 支持的文档格式：Markdown
+5. 支持的文档格式：Markdown、PDF
 
 ## 📝TODO
 
 - [x] 召回后精排rerank
 - [x] BM25关键词匹配 + 多路召回
 - [x] 多查询召回
-- [ ] 语义切分chunking
-- [ ] 多层Agent Memory
+- [x] 语义切分chunking
+- [x] 多层Agent Memory
 - [ ] 智能相册自动分类

@@ -48,10 +48,41 @@ const api = {
   sendChatMessage(message) {
     return this.request('POST', '/chat/', { message, include_resources: true });
   },
+  // ===== 对话管理 =====
+  async getConversations() {
+    return this.request('GET', '/conversations/');
+  },
+
+  async createConversation(title = null) {
+    const body = {};
+    if (title) body.title = title;
+    return this.request('POST', '/conversations/create/', body);
+  },
+
+  async getConversation(conversationId) {
+    return this.request('GET', `/conversations/${conversationId}/`);
+  },
+
+  async deleteConversation(conversationId) {
+    return this.request('DELETE', `/conversations/${conversationId}/delete/`);
+  },
+
+  // ===== 长期记忆 =====
+  async getMemory() {
+    return this.request('GET', '/memory/');
+  },
+
+  async writeMemory(content, mode = 'append') {
+    return this.request('PUT', '/memory/write/', { content, mode });
+  },
+
   async sendAgentMessageStream(message, threadId, callbacks) {
     const url = `${API_BASE}/agent/chat/stream/`;
     const body = { message };
-    if (threadId) body.thread_id = threadId;
+    if (threadId) {
+      body.thread_id = threadId;
+      body.conversation_id = threadId;
+    }
 
     let reader;
     try {

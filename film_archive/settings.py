@@ -97,5 +97,5 @@ CORS_ALLOW_ALL_ORIGINS = True
 # Application settings from existing config
 from configures import (
     ARK_API_KEY, ARK_ENDPOINT, EMBED_MODEL, CHAT_MODEL, VISION_MODEL,
-    VECTOR_DB_PATH, RES_DIR
+    VECTOR_DB_PATH, RES_DIR, DATA_DIR, CONVERSATIONS_DIR, MEMORY_FILE
 )

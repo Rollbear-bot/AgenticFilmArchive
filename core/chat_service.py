@@ -49,7 +49,8 @@ class ChatService:
             self._agent_service = get_agent_service()
         return self._agent_service
 
-    def chat_with_agent(self, message: str, thread_id: str | None = None) -> dict:
+    def chat_with_agent(self, message: str, thread_id: str | None = None,
+                         conversation_id: str | None = None) -> dict:
         """使用 LangGraph Agent 处理用户消息
 
         Agent 会自主决定是否需要检索知识库、分析图片或按标签搜索。
@@ -57,24 +58,28 @@ class ChatService:
         Args:
             message: 用户消息
             thread_id: 会话线程 ID，用于多轮对话。不传则自动生成。
+            conversation_id: 对话存储 ID，默认等于 thread_id
 
         Returns:
             {
                 "answer": str,          # Agent 最终回答
                 "resources_used": list, # 工具调用记录
                 "history_id": str,      # thread_id（用于后续对话）
+                "conversation_id": str, # 对话存储 ID
             }
         """
         agent = self._get_agent_service()
-        result = agent.chat(message, thread_id=thread_id)
+        result = agent.chat(message, thread_id=thread_id, conversation_id=conversation_id)
 
         return {
             "answer": result["answer"],
             "resources_used": result["tool_calls"],
             "history_id": result["thread_id"],
+            "conversation_id": result.get("conversation_id", result["thread_id"]),
         }
 
-    async def chat_with_agent_stream(self, message: str, thread_id: str | None = None):
+    async def chat_with_agent_stream(self, message: str, thread_id: str | None = None,
+                                     conversation_id: str | None = None):
         """使用 LangGraph Agent 进行流式对话
 
         返回异步生成器，逐个 yield SSE 格式的事件字符串。
@@ -83,12 +88,15 @@ class ChatService:
         Args:
             message: 用户消息
             thread_id: 会话线程 ID，用于多轮对话。不传则自动生成。
+            conversation_id: 对话存储 ID，默认等于 thread_id
 
         Yields:
             SSE 格式事件字符串
         """
         agent = self._get_agent_service()
-        async for sse_chunk in agent.chat_stream(message, thread_id=thread_id):
+        async for sse_chunk in agent.chat_stream(
+            message, thread_id=thread_id, conversation_id=conversation_id
+        ):
             yield sse_chunk
 
     def retrieve_documents(

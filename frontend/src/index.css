@@ -244,8 +244,9 @@ body {
   display: grid;
   grid-template-columns: 1fr 280px;
   gap: 24px;
-  height: calc(100vh - 180px);
+  height: calc(100vh - 60px - 24px - 24px - 52px);
   min-height: 500px;
+  overflow: hidden;
 }
 
 .chat-messages {
@@ -255,6 +256,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
 .chat-messages-list {
@@ -488,6 +490,7 @@ body {
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.08);
   padding: 20px;
+  overflow-y: auto;
 }
 
 .chat-sidebar h3 {
@@ -1318,4 +1321,101 @@ body {
 /* Strikethrough */
 .markdown-content del {
   color: #999;
+}
+
+/* =============================================
+   Conversation Sidebar Styles
+   ============================================= */
+
+.conversation-sidebar {
+  margin-top: 16px;
+  border-top: 1px solid #eee;
+  padding-top: 12px;
+}
+
+.conversation-sidebar h3 {
+  font-size: 1rem;
+  color: #1a1a2e;
+  margin-bottom: 12px;
+}
+
+.conversation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.conversation-item {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.conversation-item:hover {
+  background: #f5f7fa;
+  border-color: #667eea;
+}
+
+.conversation-item.active {
+  background: #eef2ff;
+  border-color: #667eea;
+  box-shadow: 0 0 0 1px #667eea;
+}
+
+.conv-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 24px;
+}
+
+.conv-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: #999;
+}
+
+.conv-delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: #f0f0f0;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 18px;
+  text-align: center;
+  color: #999;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.conversation-item:hover .conv-delete-btn {
+  opacity: 1;
+}
+
+.conv-delete-btn:hover {
+  background: #ff4444;
+  color: white;
+}
+
+.conv-empty {
+  text-align: center;
+  color: #ccc;
+  font-size: 0.85rem;
+  padding: 20px;
 }

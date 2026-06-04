@@ -9,3 +9,8 @@
 /.agent/
 /ark_solution_demos/
 /db.sqlite3
+# Agent memory data (conversations + long-term memory)
+/data/*
+!/data/.gitkeep
+!/data/conversations/.gitkeep
+/.claude/

@@ -45,6 +45,11 @@ MULTI_QUERY_COUNT = int(os.getenv("MULTI_QUERY_COUNT", "3"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
 
+# 数据目录 & 长期记忆
+DATA_DIR = os.getenv("DATA_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
+CONVERSATIONS_DIR = os.getenv("CONVERSATIONS_DIR", os.path.join(DATA_DIR, "conversations"))
+MEMORY_FILE = os.getenv("MEMORY_FILE", os.path.join(DATA_DIR, "memory.md"))
+
 
 class PROMPTS:
     IMAGE_TAGGER = """

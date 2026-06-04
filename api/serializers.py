@@ -59,6 +59,7 @@ class ChatResponseSerializer(serializers.Serializer):
     answer = serializers.CharField()
     resources_used = serializers.ListField(child=serializers.DictField(), required=False, default=list)
     history_id = serializers.CharField(required=False)
+    conversation_id = serializers.CharField(required=False)
 
 
 class AgentChatMessageSerializer(serializers.Serializer):
@@ -66,6 +67,7 @@ class AgentChatMessageSerializer(serializers.Serializer):
 
     message = serializers.CharField(required=True)
     thread_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    conversation_id = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
 
 class ChatHistorySerializer(serializers.Serializer):
@@ -105,3 +107,54 @@ class ConfigSerializer(serializers.Serializer):
     version = serializers.CharField()
     resource_dir = serializers.CharField()
     vector_db_path = serializers.CharField()
+
+
+# ---------------------------------------------------------------------------
+# 对话管理序列化器
+# ---------------------------------------------------------------------------
+
+
+class ConversationListSerializer(serializers.Serializer):
+    """对话列表项（元数据）"""
+
+    id = serializers.CharField()
+    title = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
+    message_count = serializers.IntegerField()
+
+
+class ConversationDetailSerializer(serializers.Serializer):
+    """完整对话（含消息列表）"""
+
+    id = serializers.CharField()
+    title = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
+    messages = serializers.ListField(child=serializers.DictField())
+
+
+class ConversationCreateSerializer(serializers.Serializer):
+    """创建对话请求"""
+
+    title = serializers.CharField(required=False, allow_blank=True)
+
+
+# ---------------------------------------------------------------------------
+# 长期记忆序列化器
+# ---------------------------------------------------------------------------
+
+
+class MemoryReadSerializer(serializers.Serializer):
+    """长期记忆内容"""
+
+    content = serializers.CharField()
+
+
+class MemoryWriteSerializer(serializers.Serializer):
+    """写入长期记忆请求"""
+
+    content = serializers.CharField(required=True)
+    mode = serializers.ChoiceField(
+        choices=["append", "overwrite"], default="append", required=False
+    )

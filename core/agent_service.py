@@ -3,6 +3,11 @@ Agent Service - LangGraph ReAct Agent 服务层
 
 使用 LangGraph 的 create_react_agent 创建支持工具调用的智能 Agent，
 让 LLM 自主决定何时检索知识库、何时分析图片、何时按标签搜索。
+
+支持：
+- 短期记忆：对话持久化（JSON 文件）
+- 长期记忆：跨对话记忆（Markdown 文件）
+- 多轮对话状态管理（MemorySaver + 重启后回放）
 """
 
 import asyncio
@@ -11,7 +16,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
@@ -30,13 +35,18 @@ AGENT_SYSTEM_PROMPT = """你是一个专业的胶片摄影助手。你可以使�
 - **retrieve_knowledge**: 从知识库中检索胶片摄影相关的文档和图片信息
 - **analyze_image**: 查看和分析具体的图片内容
 - **search_by_tags**: 按场景、风格、胶片类型标签筛选和浏览资源
+- **read_memory**: 读取用户的长期记忆，了解用户的偏好和之前的重要上下文
+- **write_memory**: 将重要信息写入长期记忆，例如用户的偏好、设备信息、常用胶片类型等
 
 当用户提问时：
-1. 如果问题涉及胶片摄影知识、技巧、推荐等，先使用 retrieve_knowledge 检索知识库
-2. 如果用户提到具体的图片或需要查看图片内容，使用 analyze_image
-3. 如果需要按类别浏览资源，使用 search_by_tags
-4. 综合检索结果给出专业、准确的中文回答
-5. 如果没有检索到相关内容，可以基于你的知识回答，但要说明这是通用知识而非来自用户的档案
+1. **首先使用 read_memory** 了解用户的偏好和历史上下文
+2. 如果问题涉及胶片摄影知识、技巧、推荐等，使用 retrieve_knowledge 检索知识库
+3. 如果用户提到具体的图片或需要查看图片内容，使用 analyze_image
+4. 如果需要按类别浏览资源，使用 search_by_tags
+5. 综合检索结果和用户记忆给出专业、准确的中文回答
+6. 如果没有检索到相关内容，可以基于你的知识回答，但要说明这是通用知识而非来自用户的档案
+7. 当用户明确说"记住"、"保存"、或分享重要偏好/信息时，使用 write_memory 保存到长期记忆
+8. 当检测到用户的重要偏好、设备信息、常用胶片等，可以主动建议用户保存到记忆中
 
 请用简洁、专业的中文回答，并在回答中引用你使用的信息来源。"""
 
@@ -212,11 +222,51 @@ def search_by_tags(
     return "\n".join(formatted)
 
 
+@tool
+def read_memory(query: str = "") -> str:
+    """读取用户的长期记忆。使用此工具了解用户的偏好、历史上下文和之前保存的重要信息。
+
+    应在每次对话开始时调用，以获取用户相关背景。
+
+    Args:
+        query: 保留参数（当前未使用，返回全部记忆）
+
+    Returns:
+        用户的长期记忆内容，或提示信息（尚无记忆时）
+    """
+    from core.memory_manager import get_memory_manager
+
+    mm = get_memory_manager()
+    content = mm.read_memory()
+    if not content.strip():
+        return "长期记忆为空。用户尚未保存任何偏好或重要信息。"
+    return content
+
+
+@tool
+def write_memory(content: str) -> str:
+    """将重要信息写入长期记忆。当用户明确要求记住某事、分享重要偏好或设备信息时使用。
+
+    仅用于真正重要的信息，不要用于闲聊内容。
+
+    Args:
+        content: 要保存的信息，支持 Markdown 格式
+
+    Returns:
+        确认消息，含记忆保存状态
+    """
+    from core.memory_manager import get_memory_manager
+
+    mm = get_memory_manager()
+    result = mm.write_memory(content)
+    return f"记忆已保存。状态: {result.get('status', 'success')}"
+
+
 # ---------------------------------------------------------------------------
 # Agent 工具列表
 # ---------------------------------------------------------------------------
 
-AGENT_TOOLS = [retrieve_knowledge, analyze_image, search_by_tags]
+AGENT_TOOLS = [retrieve_knowledge, analyze_image, search_by_tags, read_memory, write_memory]
 
 
 # ---------------------------------------------------------------------------
@@ -227,8 +277,9 @@ AGENT_TOOLS = [retrieve_knowledge, analyze_image, search_by_tags]
 class AgentService:
     """LangGraph ReAct Agent 服务
 
-    管理 Agent 的生命周期，提供同步对话接口。
+    管理 Agent 的生命周期，提供同步/流式对话接口。
     使用 MemorySaver 实现多轮对话状态管理。
+    支持对话持久化和长期记忆。
     """
 
     _instance = None
@@ -273,18 +324,163 @@ class AgentService:
 
         print("[Agent] Agent 初始化完成")
 
-    def chat(self, message: str, thread_id: str | None = None) -> dict[str, Any]:
+    # -----------------------------------------------------------------------
+    # 长期记忆上下文注入
+    # -----------------------------------------------------------------------
+
+    def _get_memory_context(self) -> str:
+        """加载长期记忆并格式化为 Agent 上下文。
+
+        Returns:
+            格式化的记忆上下文字符串，无记忆时返回空字符串
+        """
+        from core.memory_manager import get_memory_manager
+
+        mm = get_memory_manager()
+        content = mm.read_memory()
+        if content.strip():
+            return f"\n\n[长期记忆]\n以下是之前保存的关于用户的偏好和重要信息：\n\n{content}\n\n请在回答时参考这些信息。\n"
+        return ""
+
+    # -----------------------------------------------------------------------
+    # 对话持久化
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _save_exchange(
+        conversation_id: str,
+        user_message: str,
+        assistant_message: str,
+        tool_calls: list,
+    ) -> None:
+        """保存一轮完整的用户+助手交换到对话文件。
+
+        Args:
+            conversation_id: 对话 UUID
+            user_message: 用户消息文本
+            assistant_message: 助手回复文本
+            tool_calls: 工具调用记录列表
+        """
+        from datetime import datetime, timezone
+
+        from core.conversation_store import get_conversation_store
+
+        store = get_conversation_store()
+        conv = store.get_conversation(conversation_id)
+        existing = conv.get("messages", []) if conv else []
+
+        now = datetime.now(timezone.utc).isoformat()
+        existing.append({"role": "user", "content": user_message, "time": now})
+        existing.append({
+            "role": "assistant",
+            "content": assistant_message,
+            "time": now,
+            "tool_calls": tool_calls,
+        })
+
+        # 自动生成标题（首条用户消息）
+        title = None
+        if len(existing) <= 2:
+            title = user_message[:50] + ("…" if len(user_message) > 50 else "")
+
+        store.save_conversation(conversation_id, existing)
+
+    # -----------------------------------------------------------------------
+    # 状态回放（服务器重启后恢复 MemorySaver 状态）
+    # -----------------------------------------------------------------------
+
+    def _has_checkpoint(self, thread_id: str) -> bool:
+        """检查 MemorySaver 中是否存在给定 thread_id 的 checkpoint。
+
+        Args:
+            thread_id: 会话线程 ID
+
+        Returns:
+            True 如果 MemorySaver 中存在状态
+        """
+        self._ensure_agent()
+        config = {"configurable": {"thread_id": thread_id}}
+        try:
+            state = self._agent.get_state(config)
+            return state is not None and bool(state.values)
+        except Exception:
+            return False
+
+    def _replay_conversation(self, thread_id: str, messages: list[dict[str, Any]]) -> None:
+        """从保存的消息列表重建 LangGraph checkpoint 状态。
+
+        使用 update_state() 直接注入历史消息，不经过 LLM。
+        仅注入用户和助手消息对，不重放工具调用。
+
+        Args:
+            thread_id: 会话线程 ID
+            messages: [{role, content, ...}, ...]
+        """
+        self._ensure_agent()
+
+        lc_messages = []
+        for msg in messages:
+            if msg.get("role") == "user":
+                lc_messages.append(HumanMessage(content=msg.get("content", "")))
+            elif msg.get("role") == "assistant":
+                lc_messages.append(AIMessage(content=msg.get("content", "")))
+
+        if lc_messages:
+            config = {"configurable": {"thread_id": thread_id}}
+            try:
+                self._agent.update_state(config, {"messages": lc_messages})
+                print(f"[Agent] 回放了 {len(lc_messages)} 条消息到 thread={thread_id[:8]}...")
+            except Exception as e:
+                print(f"[Agent] 回放失败 (thread={thread_id[:8]}...): {e}")
+
+    def _ensure_state(self, thread_id: str, conversation_id: str) -> None:
+        """确保 LangGraph 有给定 thread 的状态。
+
+        若 MemorySaver 缺失 checkpoint，尝试从 JSON 文件回放。
+        若 JSON 文件也不存在，则视为新对话。
+
+        Args:
+            thread_id: LangGraph 线程 ID
+            conversation_id: 对话存储 ID
+        """
+        self._ensure_agent()
+
+        if self._has_checkpoint(thread_id):
+            return  # 状态已存在
+
+        # 从 JSON 回放
+        from core.conversation_store import get_conversation_store
+
+        store = get_conversation_store()
+        conv = store.get_conversation(conversation_id or thread_id)
+        if conv and conv.get("messages"):
+            self._replay_conversation(thread_id, conv["messages"])
+
+    # -----------------------------------------------------------------------
+    # 对话接口
+    # -----------------------------------------------------------------------
+
+    def chat(
+        self,
+        message: str,
+        thread_id: str | None = None,
+        conversation_id: str | None = None,
+        save: bool = True,
+    ) -> dict[str, Any]:
         """同步对话接口
 
         Args:
             message: 用户消息
             thread_id: 会话线程 ID，用于多轮对话。不传则自动生成。
+            conversation_id: 对话存储 ID，默认等于 thread_id
+            save: 是否保存对话到 JSON（API 调用时为 True）
 
         Returns:
             {
                 "answer": str,          # Agent 最终回答
                 "tool_calls": list,     # 工具调用记录
                 "thread_id": str,       # 会话线程 ID
+                "conversation_id": str, # 对话存储 ID
             }
         """
         self._ensure_agent()
@@ -292,13 +488,22 @@ class AgentService:
         if thread_id is None:
             thread_id = str(uuid.uuid4())
 
+        # conversation_id 默认为 thread_id
+        cid = conversation_id or thread_id
+
+        # 确保状态（回放或新建）
+        self._ensure_state(thread_id, cid)
+
         config = {"configurable": {"thread_id": thread_id}}
+
+        # 注入长期记忆上下文
+        memory_ctx = self._get_memory_context()
 
         print(f"\n[Agent] 收到消息 (thread={thread_id[:8]}...): {message[:100]}")
 
         try:
             result = self._agent.invoke(
-                {"messages": [HumanMessage(content=message)]},
+                {"messages": [HumanMessage(content=message + memory_ctx)]},
                 config=config,
             )
         except Exception as e:
@@ -307,6 +512,7 @@ class AgentService:
                 "answer": f"抱歉，处理您的消息时出错：{str(e)}",
                 "tool_calls": [],
                 "thread_id": thread_id,
+                "conversation_id": cid,
             }
 
         # 解析结果：提取最终回答和工具调用记录
@@ -327,15 +533,11 @@ class AgentService:
 
             if hasattr(msg, "content") and msg.content:
                 # 跳过 ToolMessage 的内容（那是工具返回值，不是最终回答）
-                from langchain_core.messages import AIMessage
-
                 if isinstance(msg, AIMessage) and not (hasattr(msg, "tool_calls") and msg.tool_calls):
                     final_answer = msg.content
 
         # 如果没找到纯文本 AIMessage，取最后一个有内容的 AIMessage
         if not final_answer:
-            from langchain_core.messages import AIMessage
-
             for msg in reversed(messages):
                 if isinstance(msg, AIMessage) and msg.content:
                     final_answer = msg.content
@@ -348,13 +550,24 @@ class AgentService:
         if tool_calls:
             print(f"[Agent] 调用了 {len(tool_calls)} 个工具: {[tc['tool'] for tc in tool_calls]}")
 
+        # 持久化对话
+        if save:
+            self._save_exchange(cid, message, final_answer, tool_calls)
+
         return {
             "answer": final_answer,
             "tool_calls": tool_calls,
             "thread_id": thread_id,
+            "conversation_id": cid,
         }
 
-    async def chat_stream(self, message: str, thread_id: str | None = None) -> AsyncGenerator[str, None]:
+    async def chat_stream(
+        self,
+        message: str,
+        thread_id: str | None = None,
+        conversation_id: str | None = None,
+        save: bool = True,
+    ) -> AsyncGenerator[str, None]:
         """流式对话接口 — 通过 astream_events 实时推送 Agent 执行过程。
 
         生成 SSE 格式的事件字符串，供 Django StreamingHttpResponse 消费。
@@ -363,6 +576,8 @@ class AgentService:
         Args:
             message: 用户消息
             thread_id: 会话线程 ID，用于多轮对话。不传则自动生成。
+            conversation_id: 对话存储 ID，默认等于 thread_id
+            save: 是否保存对话到 JSON
 
         Yields:
             SSE 格式字符串，如 "event: text\\ndata: {...}\\n\\n"
@@ -372,14 +587,27 @@ class AgentService:
         if thread_id is None:
             thread_id = str(uuid.uuid4())
 
+        # conversation_id 默认为 thread_id
+        cid = conversation_id or thread_id
+
+        # 确保状态（回放或新建）
+        self._ensure_state(thread_id, cid)
+
         config = {"configurable": {"thread_id": thread_id}}
 
         # 清空上一次的图片缓存
         _tool_image_cache.pop("latest", None)
 
+        # 注入长期记忆上下文
+        memory_ctx = self._get_memory_context()
+
         print(f"\n[Agent Stream] 收到消息 (thread={thread_id[:8]}...): {message[:100]}")
 
-        input_data = {"messages": [HumanMessage(content=message)]}
+        input_data = {"messages": [HumanMessage(content=message + memory_ctx)]}
+
+        # 收集流式结果用于持久化
+        streamed_text_parts: list[str] = []
+        streamed_tool_calls: list[dict] = []
 
         try:
             async for event in self._agent.astream_events(input_data, config=config, version="v2"):
@@ -413,6 +641,7 @@ class AgentService:
                                     thinking_parts.append(str(args))
                                 yield _sse_event("thinking", {"content": " | ".join(thinking_parts)})
                     elif chunk_content:
+                        streamed_text_parts.append(chunk_content)
                         yield _sse_event("text", {"content": chunk_content})
 
                 # --- 工具开始执行 ---
@@ -437,6 +666,12 @@ class AgentService:
                         output_str = str(output)
                     # 结果摘要（前 500 字符）
                     result_preview = output_str[:500] + ("..." if len(output_str) > 500 else "")
+
+                    # 记录工具调用
+                    streamed_tool_calls.append({
+                        "tool": event_name,
+                        "result_preview": result_preview,
+                    })
 
                     yield _sse_event("tool_end", {
                         "tool": event_name,
@@ -480,7 +715,13 @@ class AgentService:
                                 yield _sse_event("tool_images", {"images": thumbs})
 
             # --- 完成 ---
-            yield _sse_event("done", {"thread_id": thread_id})
+            final_text = "".join(streamed_text_parts)
+
+            # 持久化对话
+            if save:
+                self._save_exchange(cid, message, final_text, streamed_tool_calls)
+
+            yield _sse_event("done", {"thread_id": thread_id, "conversation_id": cid})
 
         except Exception as e:
             print(f"[Agent Stream] 错误: {e}")

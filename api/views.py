@@ -17,7 +17,12 @@ from api.serializers import (
     ChatMessageSerializer,
     ChatResponseSerializer,
     ConfigSerializer,
+    ConversationCreateSerializer,
+    ConversationDetailSerializer,
+    ConversationListSerializer,
     HealthCheckSerializer,
+    MemoryReadSerializer,
+    MemoryWriteSerializer,
     ResourceListSerializer,
     ResourceSearchSerializer,
     ResourceSerializer,
@@ -25,6 +30,8 @@ from api.serializers import (
 )
 from configures import RES_DIR, VECTOR_DB_PATH
 from core.chat_service import get_chat_service
+from core.conversation_store import get_conversation_store
+from core.memory_manager import get_memory_manager
 from core.vector_db import get_vector_db_service
 
 
@@ -316,7 +323,7 @@ def agent_chat_api(request):
     """Agent 对话接口 - 使用 LangGraph ReAct Agent
 
     Agent 会自主决定是否需要检索知识库、分析图片或按标签搜索。
-    支持多轮对话（通过 thread_id）。
+    支持多轮对话（通过 thread_id）和对话持久化（通过 conversation_id）。
     """
     serializer = AgentChatMessageSerializer(data=request.data)
     if not serializer.is_valid():
@@ -325,9 +332,12 @@ def agent_chat_api(request):
     data = serializer.validated_data
     message = data["message"]
     thread_id = data.get("thread_id") or None
+    conversation_id = data.get("conversation_id") or thread_id
 
     chat_service = get_chat_service()
-    result = chat_service.chat_with_agent(message, thread_id=thread_id)
+    result = chat_service.chat_with_agent(
+        message, thread_id=thread_id, conversation_id=conversation_id
+    )
 
     response_serializer = ChatResponseSerializer(result)
     return Response(response_serializer.data)
@@ -356,6 +366,7 @@ def agent_chat_stream_api(request):
     data = serializer.validated_data
     message = data["message"]
     thread_id = data.get("thread_id") or None
+    conversation_id = data.get("conversation_id") or thread_id
 
     chat_service = get_chat_service()
 
@@ -368,7 +379,9 @@ def agent_chat_stream_api(request):
         asyncio.set_event_loop(loop)
         try:
             async def _collect():
-                async for sse_chunk in chat_service.chat_with_agent_stream(message, thread_id=thread_id):
+                async for sse_chunk in chat_service.chat_with_agent_stream(
+                    message, thread_id=thread_id, conversation_id=conversation_id
+                ):
                     q.put(sse_chunk.encode("utf-8"))
                 q.put(None)  # 结束哨兵
             loop.run_until_complete(_collect())
@@ -411,3 +424,75 @@ def chat_history_api(request):
         return Response({"message": "对话历史已清除"})
 
     return Response({"history": [], "message": "对话历史记录功能开发中"})
+
+
+# ============================================================================
+# 对话管理接口
+# ============================================================================
+
+
+@api_view(["GET"])
+def conversation_list_api(request):
+    """列出所有已保存的对话"""
+    store = get_conversation_store()
+    conversations = store.list_conversations()
+    return Response({"conversations": conversations})
+
+
+@api_view(["POST"])
+def conversation_create_api(request):
+    """创建新对话"""
+    serializer = ConversationCreateSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    title = serializer.validated_data.get("title")
+    conv = get_conversation_store().create_conversation(title=title)
+    return Response({
+        "id": conv["id"],
+        "title": conv["title"],
+        "created_at": conv["created_at"],
+    })
+
+
+@api_view(["GET"])
+def conversation_detail_api(request, conversation_id):
+    """获取完整对话内容（含消息列表）"""
+    conv = get_conversation_store().get_conversation(conversation_id)
+    if not conv:
+        return Response({"message": "对话不存在"}, status=status.HTTP_404_NOT_FOUND)
+    return Response(conv)
+
+
+@api_view(["DELETE"])
+def conversation_delete_api(request, conversation_id):
+    """删除对话"""
+    get_conversation_store().delete_conversation(conversation_id)
+    return Response({"message": "对话已删除"})
+
+
+# ============================================================================
+# 长期记忆接口
+# ============================================================================
+
+
+@api_view(["GET"])
+def memory_read_api(request):
+    """读取长期记忆"""
+    mm = get_memory_manager()
+    content = mm.read_memory()
+    return Response({"content": content})
+
+
+@api_view(["PUT", "POST"])
+def memory_write_api(request):
+    """写入长期记忆"""
+    serializer = MemoryWriteSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    mm = get_memory_manager()
+    result = mm.write_memory(serializer.validated_data["content"])
+    return Response({
+        "content": mm.read_memory(),
+        "message": "记忆已更新",
+        "status": result.get("status", "success"),
+    })

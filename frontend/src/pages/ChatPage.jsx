@@ -14,7 +14,9 @@ function ChatPage() {
   const [inputMessage, setInputMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [agentMode, setAgentMode] = useState(true);
-  const [threadId, setThreadId] = useState(null);
+  const [currentConversationId, setCurrentConversationId] = useState(null);
+  const [conversations, setConversations] = useState([]);
+  const [convLoading, setConvLoading] = useState(false);
   const messagesEndRef = useRef(null);
 
   const quickQuestions = [
@@ -25,20 +27,31 @@ function ChatPage() {
     '如何冲洗胶片？',
   ];
 
+  const welcomeMessage = agentMode
+    ? '您好！我是胶片摄影 **Agent 智能助手**。我会自主决定是否需要检索知识库、分析图片或按标签搜索，为您提供更精准的回答。'
+    : '您好！我是胶片摄影智能助手。您可以向我咨询关于胶片摄影的任何问题，我会尽力为您解答。';
+
   useEffect(() => {
-    const welcomeMsg = agentMode
-      ? '您好！我是胶片摄影 **Agent 智能助手**。我会自主决定是否需要检索知识库、分析图片或按标签搜索，为您提供更精准的回答。'
-      : '您好！我是胶片摄影智能助手。您可以向我咨询关于胶片摄影的任何问题，我会尽力为您解答。';
+    loadConversations();
+    // 初始不自动创建对话，让用户点击"新建对话"
     setMessages([
       {
+        id: nextMsgId(),
         role: 'assistant',
-        content: welcomeMsg,
+        content: welcomeMessage,
         time: formatTime(new Date()),
         tool_calls: [],
       },
     ]);
-    setThreadId(null);
   }, [agentMode]);
+
+  // 禁止对话页的页面级滚动，仅对话区域内部滚动
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, []);
 
   useEffect(() => {
     scrollToBottom();
@@ -46,6 +59,91 @@ function ChatPage() {
 
   function scrollToBottom() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }
+
+  // ===== 对话列表管理 =====
+
+  async function loadConversations() {
+    try {
+      const result = await api.getConversations();
+      setConversations(result.conversations || []);
+    } catch (error) {
+      console.error('加载对话列表失败:', error);
+    }
+  }
+
+  async function handleNewConversation() {
+    // 如果正在加载，不允许新建
+    if (loading) return;
+
+    try {
+      setConvLoading(true);
+      const result = await api.createConversation();
+      const newId = result.id;
+
+      await loadConversations();
+
+      setCurrentConversationId(newId);
+      setMessages([
+        {
+          id: nextMsgId(),
+          role: 'assistant',
+          content: '新对话已开始！我是胶片摄影 Agent 智能助手。请告诉我您想了解什么？',
+          time: formatTime(new Date()),
+          tool_calls: [],
+        },
+      ]);
+    } catch (error) {
+      console.error('创建对话失败:', error);
+    } finally {
+      setConvLoading(false);
+    }
+  }
+
+  async function handleSwitchConversation(convId) {
+    if (convId === currentConversationId) return;
+    if (loading) return;
+
+    try {
+      setConvLoading(true);
+      const conv = await api.getConversation(convId);
+      const loadedMessages = (conv.messages || []).map((msg) => ({
+        id: nextMsgId(),
+        role: msg.role,
+        content: msg.content,
+        time: msg.time,
+        tool_calls: msg.tool_calls || [],
+        thinking: [],
+      }));
+      setMessages(loadedMessages);
+      setCurrentConversationId(convId);
+    } catch (error) {
+      console.error('加载对话失败:', error);
+    } finally {
+      setConvLoading(false);
+    }
+  }
+
+  async function handleDeleteConversation(convId) {
+    if (!confirm('确定要删除这个对话吗？')) return;
+    try {
+      await api.deleteConversation(convId);
+      await loadConversations();
+      if (convId === currentConversationId) {
+        setCurrentConversationId(null);
+        setMessages([
+          {
+            id: nextMsgId(),
+            role: 'assistant',
+            content: welcomeMessage,
+            time: formatTime(new Date()),
+            tool_calls: [],
+          },
+        ]);
+      }
+    } catch (error) {
+      console.error('删除对话失败:', error);
+    }
   }
 
   // ===== 流式对话 =====
@@ -185,8 +283,13 @@ function ChatPage() {
       },
 
       onDone(data) {
-        if (data.thread_id) {
-          setThreadId(data.thread_id);
+        // 更新 conversation_id 和列表
+        if (data.conversation_id) {
+          setCurrentConversationId(data.conversation_id);
+          // 如果是新对话，刷新列表
+          loadConversations();
+        } else if (data.thread_id) {
+          setCurrentConversationId(data.thread_id);
         }
         setMessages((prev) =>
           prev.map((m) => {
@@ -214,7 +317,7 @@ function ChatPage() {
     };
 
     try {
-      await api.sendAgentMessageStream(message, threadId, callbacks);
+      await api.sendAgentMessageStream(message, currentConversationId, callbacks);
     } catch (error) {
       console.error('Stream error:', error);
       setLoading(false);
@@ -283,6 +386,17 @@ function ChatPage() {
     const message = inputMessage.trim();
     if (!message || loading) return;
 
+    // 如果没有当前对话，自动创建一个
+    if (!currentConversationId) {
+      try {
+        const result = await api.createConversation();
+        setCurrentConversationId(result.id);
+        await loadConversations();
+      } catch (error) {
+        console.error('自动创建对话失败:', error);
+      }
+    }
+
     if (agentMode) {
       await sendMessageStreaming(message);
     } else {
@@ -296,19 +410,6 @@ function ChatPage() {
 
   function handleToggleMode() {
     setAgentMode((prev) => !prev);
-  }
-
-  function handleNewSession() {
-    setThreadId(null);
-    setMessages([
-      {
-        id: nextMsgId(),
-        role: 'assistant',
-        content: '已开始新的对话会话。Agent 将重新理解您的上下文。',
-        time: formatTime(new Date()),
-        tool_calls: [],
-      },
-    ]);
   }
 
   return (
@@ -331,9 +432,13 @@ function ChatPage() {
                 📋 普通模式
               </button>
             </div>
-            {agentMode && threadId && (
-              <button className="new-session-btn" onClick={handleNewSession}>
-                🔄 新会话
+            {agentMode && (
+              <button
+                className="new-session-btn"
+                onClick={handleNewConversation}
+                disabled={loading || convLoading}
+              >
+                ➕ 新对话
               </button>
             )}
             {agentMode && (
@@ -402,7 +507,43 @@ function ChatPage() {
         </div>
 
         <div className="chat-sidebar">
-          <h3>快捷问题</h3>
+          {/* 对话列表 — 最常用，置顶 */}
+          {agentMode && (
+            <div className="conversation-sidebar">
+              <h3>历史对话</h3>
+              <div className="conversation-list">
+                {convLoading && conversations.length === 0 && (
+                  <div className="conv-empty">加载中...</div>
+                )}
+                {conversations.map((conv) => (
+                  <div
+                    key={conv.id}
+                    className={`conversation-item ${conv.id === currentConversationId ? 'active' : ''}`}
+                    onClick={() => handleSwitchConversation(conv.id)}
+                  >
+                    <div className="conv-title">{conv.title || '未命名'}</div>
+                    <div className="conv-meta">
+                      <span className="conv-msg-count">{conv.message_count || 0} 条消息</span>
+                      <span className="conv-time">{formatDate(conv.updated_at)}</span>
+                    </div>
+                    <button
+                      className="conv-delete-btn"
+                      onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conv.id); }}
+                      title="删除对话"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                {!convLoading && conversations.length === 0 && (
+                  <div className="conv-empty">暂无历史对话</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 快捷问题 — 次常用 */}
+          <h3 style={{ marginTop: agentMode ? '16px' : '0' }}>快捷问题</h3>
           <div className="quick-questions">
             {quickQuestions.map((q, index) => (
               <button
@@ -415,6 +556,7 @@ function ChatPage() {
             ))}
           </div>
 
+          {/* Agent 工具集 — 参考信息，置底 */}
           {agentMode && (
             <div className="agent-info" style={{ marginTop: '20px' }}>
               <h3>Agent 工具集</h3>
@@ -441,6 +583,16 @@ function ChatPage() {
                   <br />
                   按标签筛选浏览资源
                 </li>
+                <li>
+                  🧠 <strong>read_memory</strong>
+                  <br />
+                  读取用户长期记忆
+                </li>
+                <li>
+                  💾 <strong>write_memory</strong>
+                  <br />
+                  保存重要偏好信息
+                </li>
               </ul>
             </div>
           )}
@@ -448,6 +600,23 @@ function ChatPage() {
       </div>
     </div>
   );
+}
+
+/** 简洁日期格式化 */
+function formatDate(isoString) {
+  if (!isoString) return '';
+  const d = new Date(isoString);
+  const now = new Date();
+  const diff = now - d;
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (mins < 1) return '刚刚';
+  if (mins < 60) return `${mins}分钟前`;
+  if (hours < 24) return `${hours}小时前`;
+  if (days < 7) return `${days}天前`;
+  return d.toLocaleDateString('zh-CN');
 }
 
 export default ChatPage;
