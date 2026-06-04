@@ -62,11 +62,17 @@ def resource_list_api(request):
     """获取资源列表（按文件聚合，避免重复）"""
     page = int(request.GET.get("page", 1))
     page_size = int(request.GET.get("page_size", 20))
+    doc_type = request.GET.get("doc_type", None)
+    # 前端传 "all" 时等同于不过滤
+    if doc_type == "all":
+        doc_type = None
 
     vec_db = get_vector_db_service()
 
-    # 获取聚合后的资源列表
-    all_resources = vec_db.get_all_resources(limit=page_size, offset=(page - 1) * page_size, aggregate=True)
+    # 获取聚合后的资源列表（支持类型过滤）
+    all_resources = vec_db.get_all_resources(
+        limit=page_size, offset=(page - 1) * page_size, aggregate=True, doc_type=doc_type
+    )
 
     # 获取唯一文件总数及各类型统计
     total_count = vec_db.get_unique_file_count()

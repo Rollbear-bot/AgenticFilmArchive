@@ -295,7 +295,11 @@ class VectorDBService:
         if not os.path.exists(doc_dir):
             return {"status": "warning", "message": "PDF目录不存在", "count": 0}
 
-        pdf_files = [os.path.join(doc_dir, f) for f in os.listdir(doc_dir) if f.lower().endswith(".pdf")]
+        pdf_files = []
+        for root, dirs, files in os.walk(doc_dir):
+            for file_name in files:
+                if file_name.lower().endswith(".pdf"):
+                    pdf_files.append(os.path.join(root, file_name))
 
         if not pdf_files:
             return {"status": "warning", "message": "未找到PDF文件", "count": 0}
@@ -425,6 +429,9 @@ class VectorDBService:
             "skipped": skipped_count,
         }
 
+    # 被视为"文档"的所有类型（Markdown + PDF 内容块）
+    _TEXT_DOC_TYPES = {"text", "pdf_text", "pdf_image", "pdf_table"}
+
     def _retrieve_raw(
         self,
         query: str,
@@ -437,7 +444,11 @@ class VectorDBService:
         """执行原始检索：向量搜索 + BM25（如适用），返回未归一化的原始结果。"""
         filter_clause = {}
         if doc_type:
-            filter_clause["type"] = doc_type
+            if doc_type == "text":
+                # 文档类型需同时覆盖 Markdown 和 PDF 的各种内容块
+                filter_clause["type"] = {"$in": list(self._TEXT_DOC_TYPES)}
+            else:
+                filter_clause["type"] = doc_type
 
         vector_results = self._vector_search(
             query, k, filter_clause, scene_tags, style_tags, film_tags
@@ -569,7 +580,11 @@ class VectorDBService:
         return filtered
 
     def _ensure_bm25_index(self) -> None:
-        """懒加载：首次搜索时从 Chroma 构建 BM25 索引。"""
+        """懒加载：首次搜索时从 Chroma 构建 BM25 索引。
+
+        索引范围包含 Markdown 文档 (type="text") 和 PDF 文本块 (type="pdf_text")，
+        使 BM25 关键词检索能覆盖所有可阅读的文本内容。
+        """
         if self.bm25_index.is_built or not self._bm25_enabled:
             return
         if self.vector_store is None:
@@ -581,7 +596,7 @@ class VectorDBService:
 
         text_docs = []
         for doc_str, meta in zip(documents, metadatas):
-            if meta and meta.get("type") == "text":
+            if meta and meta.get("type") in ("text", "pdf_text"):
                 text_docs.append(Document(page_content=doc_str, metadata=meta))
 
         if text_docs:
@@ -747,13 +762,14 @@ class VectorDBService:
             path = path.replace("//", "/")
         return path
 
-    def get_all_resources(self, limit=100, offset=0, aggregate=True):
+    def get_all_resources(self, limit=100, offset=0, aggregate=True, doc_type=None):
         """获取资源列表
 
         Args:
             limit: 返回数量限制
             offset: 偏移量
             aggregate: 是否按文件路径聚合（避免重复显示分块文档）
+            doc_type: 类型过滤，"image"（图片）或 "text"（文档，含 Markdown 和 PDF）
         """
         if self.vector_store is None:
             return []
@@ -762,25 +778,41 @@ class VectorDBService:
         documents = all_docs.get("documents", [])
         metadatas = all_docs.get("metadatas", [])
 
-        # 如果需要聚合，按file_path分组，每个文件只返回第一个块
+        # 如果需要聚合，按file_path分组，收集每个文件下的所有类型
         if aggregate:
-            seen_files = {}
-            resources = []
+            file_entries = {}
 
             for i, (doc, meta) in enumerate(zip(documents, metadatas)):
                 raw_path = meta.get("file_path", "")
                 file_path = self.normalize_path(raw_path)
 
-                # 如果这个文件还没见过
-                if file_path not in seen_files:
-                    seen_files[file_path] = {"index": i, "meta": meta, "doc": doc, "normalized_path": file_path}
+                if file_path not in file_entries:
+                    file_entries[file_path] = {
+                        "index": i,
+                        "meta": meta,
+                        "doc": doc,
+                        "types": {meta.get("type", "")},
+                    }
+                else:
+                    file_entries[file_path]["types"].add(meta.get("type", ""))
 
-            # 构建结果列表（按文件路径去重）
+            # 按 doc_type 过滤
+            text_types = self._TEXT_DOC_TYPES
+            filtered_entries = []
+            for file_path, info in file_entries.items():
+                types = info["types"]
+                if doc_type is None:
+                    filtered_entries.append((file_path, info))
+                elif doc_type == "image" and "image" in types:
+                    filtered_entries.append((file_path, info))
+                elif doc_type == "text" and types & text_types:
+                    filtered_entries.append((file_path, info))
+
+            # 构建结果列表
             unique_resources = []
-            for file_path, info in seen_files.items():
+            for file_path, info in filtered_entries:
                 meta = info["meta"]
                 doc = info["doc"]
-
                 file_type = meta.get("type", "")
 
                 unique_resources.append(
@@ -806,7 +838,7 @@ class VectorDBService:
             resources = unique_resources[offset : offset + limit] if offset < len(unique_resources) else []
             return resources
         else:
-            # 不聚合，返回所有块
+            # 不聚合，返回所有块（逐块过滤）
             resources = []
             for i, (doc, meta) in enumerate(zip(documents, metadatas)):
                 if i < offset:
@@ -814,12 +846,18 @@ class VectorDBService:
                 if len(resources) >= limit:
                     break
 
+                item_type = meta.get("type", "")
+                if doc_type == "image" and item_type != "image":
+                    continue
+                if doc_type == "text" and item_type not in self._TEXT_DOC_TYPES:
+                    continue
+
                 resources.append(
                     {
                         "id": i,
                         "file_name": meta.get("file_name", ""),
                         "file_path": meta.get("file_path", ""),
-                        "file_type": meta.get("type", ""),
+                        "file_type": item_type,
                         "scene_tags": meta.get("scene_tags", ""),
                         "style_tags": meta.get("style_tags", ""),
                         "film_tags": meta.get("film_tags", ""),
@@ -847,19 +885,33 @@ class VectorDBService:
         return len(unique_paths)
 
     def get_file_count_by_type(self, file_type):
-        """获取指定类型的唯一文件数量"""
+        """获取指定类型的唯一文件数量
+
+        当 file_type="text" 时，统计包含 Markdown 或 PDF 内容块的所有唯一文件。
+        """
         if self.vector_store is None:
             return 0
 
         all_docs = self.vector_store.get()
         metadatas = all_docs.get("metadatas", [])
 
-        unique_paths = set()
+        # 先按文件路径聚合所有类型
+        file_types = {}
         for meta in metadatas:
-            if meta.get("type") == file_type:
-                file_path = meta.get("file_path", "")
-                if file_path:
-                    unique_paths.add(file_path)
+            path = meta.get("file_path", "")
+            if not path:
+                continue
+            t = meta.get("type", "")
+            file_types.setdefault(path, set()).add(t)
+
+        text_types = self._TEXT_DOC_TYPES
+        unique_paths = set()
+        for path, types in file_types.items():
+            if file_type == "text":
+                if types & text_types:
+                    unique_paths.add(path)
+            elif file_type in types:
+                unique_paths.add(path)
 
         return len(unique_paths)
 
